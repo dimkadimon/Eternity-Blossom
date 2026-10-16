@@ -42,36 +42,44 @@ bool FallbackMinWeightPerfectMatching(int n, const std::vector<WEdge>& edges,
     if (n <= 18) {
         const int N = 1 << n;
         std::vector<long long> dp(N, kInf);
+        // par[mask] = the pair that was added last on the cheapest way to build
+        // `mask`.  Needed because the reconstruction cannot re-derive the path
+        // from the dp values alone: the DP always extends by the lowest-numbered
+        // uncovered vertex, so it never evaluates dp[S] for sets S that exclude
+        // vertex 0, and the "is this pair on an optimal path?" test would need
+        // exactly those states.
+        std::vector<std::pair<int, int>> par(N, {-1, -1});
         dp[0] = 0;
+        par[0] = {-2, -2};
         for (int mask = 0; mask < N; ++mask) {
             if (dp[mask] >= kInf) continue;
             int v = 0;
-            while (v < n && (mask >> v) & 1) ++v;
+            while (v < n && ((mask >> v) & 1)) ++v;
             if (v == n) continue;
             for (auto [u, w] : adj[v]) {
                 if ((mask >> u) & 1) continue;
                 const int nm = mask | (1 << v) | (1 << u);
-                dp[nm] = std::min(dp[nm], dp[mask] + w);
+                const long long cand = dp[mask] + w;
+                if (cand < dp[nm]) {
+                    dp[nm] = cand;
+                    par[nm] = {v, u};
+                }
             }
         }
         const int full = N - 1;
         if (dp[full] >= kInf) return false;
         weight = dp[full];
         mate.assign(n, -1);
+        // Walk the recorded parents back from "everything matched" to "nothing
+        // matched", emitting one matched pair per step.
         int mask = full;
         while (mask) {
-            int v = 0;
-            while (v < n && (mask >> v) & 1) ++v;
-            bool done = false;
-            for (auto [u, w] : adj[v]) {
-                if ((mask >> u) & 1) continue;
-                const int nm = mask | (1 << v) | (1 << u);
-                if (dp[nm] == dp[mask] + w) {
-                    mate[v] = u; mate[u] = v;
-                    mask = nm; done = true; break;
-                }
-            }
-            if (!done) return false;
+            const auto [v, u] = par[mask];
+            if (v < 0) return false;
+            mate[v] = u;
+            mate[u] = v;
+            mask &= ~(1 << v);
+            mask &= ~(1 << u);
         }
         return true;
     }

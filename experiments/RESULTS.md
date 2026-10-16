@@ -20,8 +20,14 @@ Eternity II community uses. **The record is 470/480.**
 | run | time | threads | matched |
 |---|---|---|---|
 | **best run so far (seed 21)** | 300 s | 2 | **441 / 480** |
+| seed 33 | 420 s | 2 | 437 / 480 |
+| seed 11 (`--assign 48`) | 300 s | 2 | 435 / 480 |
 | typical single run | 60 s | 1 | 434 / 480 |
 | typical single run | 25 s | 1 | 429–432 / 480 |
+
+Run-to-run spread at 300 s+ is about **±4 edges** (441 and 437 from two seeds at
+similar budgets), so any difference smaller than that in the tables below should
+be read as noise.
 
 Best board committed at `results/best_441.txt`; verify it with
 
@@ -40,6 +46,15 @@ better matching — it needs a different neighbourhood (see DESIGN.md §8).
 ---
 
 ## 2. Correctness
+
+Both build configurations are exercised: the default one (Blossom VI) and the
+pure-MIT one (`-DE2_USE_BLOSSOM_VI=OFF`), and both pass every self-test. Testing
+the MIT-only build found a real bug in the built-in fallback matcher — its
+subset-DP reconstructs the matching by walking the dp table, but the DP only
+extends by the lowest-numbered uncovered vertex and therefore never evaluates
+`dp[S]` for sets that exclude vertex 0, states the walk needs. It is fixed with
+explicit parent pointers. The bug never showed while Blossom VI was present
+because that path is only reached when Blossom throws.
 
 The solver is checked three ways, all in `./build/eternity-blossom selftest`:
 

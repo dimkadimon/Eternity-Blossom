@@ -1,0 +1,19 @@
+pieces=256 board=16x16 internal_edges=480 border_slots=64 colours=23
+grey_count=64 (needs 64)
+corners=4 edges=56 interior=196
+non_grey_colour_parity_even=yes
+matching engine: Blossom-VI (Arkhipov & Kolmogorov, arXiv:2604.20351)
+
+=== result ===
+matched edges : 437 / 480
+mismatched    : 43
+border bad    : 0
+uses every piece exactly once: yes
+wall seconds  : 420.00
+iterations    : 430264700
+perturbations : 515
+blossom passes: 21504 (improved 12081, reverted 9423)
+blossom gain  : predicted 549728, measured 312308
+assign passes : 2150 (improved 39)  measured gain 98
+matching calls: 14231  avg vertices 240  avg edges 13915  total 17.905s
+board written : results/best_seed33.txt
