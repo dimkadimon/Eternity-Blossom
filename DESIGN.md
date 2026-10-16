@@ -358,8 +358,9 @@ matching calls in the sub-10 ms range — Blossom VI solves a 1088-vertex,
 
 ## 8. Results, and how far this is from the record
 
-Current best with this code: see `experiments/RESULTS.md` (roughly 432/480 in
-40 s on one core, a little more with longer runs and two threads).
+Current best with this code: **441 / 480** (300 s, 2 threads; verified by two
+independent checkers, clean grey border, every piece used exactly once). Typical
+single-core runs reach 434/480 in 60 s. Full tables in `experiments/RESULTS.md`.
 
 The record is **470/480**, held by solvers that have had years of tuning and
 longer runs on bigger machines. Being straight about the gap: this project does

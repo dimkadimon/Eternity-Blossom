@@ -337,7 +337,8 @@ SearchOutcome SearchOnce(const Puzzle& pz, const SearchParams& params,
         // Optimal reassignment: solve one matching problem that permutes the
         // pieces over the worst cells.  This is the operator that escapes the
         // plateaus where no single swap (or packet of swaps) helps.
-        if (params.useAssign && params.assignEvery > 0 && (iters % params.assignEvery) < 4096) {
+        if (params.useAssign && params.assignCells >= 2 && params.assignEvery > 0 &&
+            (iters % params.assignEvery) < 4096) {
             AssignParams ap = params.assign;
             ap.cells = params.assignCells;
             AssignResult ar = AssignReoptimizePass(b, ap, &st.matching);

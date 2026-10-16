@@ -69,8 +69,14 @@ Recommended starting point on the real puzzle:
 
 ```bash
 ./build/eternity-blossom solve --pieces data/e2pieces.txt \
-    --time 300 --threads 8 --sample 16 --assign 48 --out results/best.txt
+    --time 300 --threads 8 --seed 1 \
+    --sample 16 --accept sa --t0 3.0 --t1 0.1 --assign 256 \
+    --out results/best.txt
 ```
+
+`--sample 16` (best-of-16 proposals per move) and `--assign 256` (whole-board
+optimal reassignment) are the two settings that matter most; between them they
+are worth about 13 matched edges. See experiments/RESULTS.md §4.
 
 ## Input formats
 
@@ -166,7 +172,9 @@ If you use Blossom VI, please cite
 ## Status
 
 See [experiments/RESULTS.md](experiments/RESULTS.md) for measured numbers.
-Current best: **~432/480** in under a minute on one core. The record is 470.
+Current best: **441/480** (300 s, 2 threads; verified by two independent
+checkers — clean grey border, every piece used once). Typical single-core runs:
+434/480 in 60 s, 429/480 in 25 s. The record is 470.
 The gap is discussed honestly in both that file and
 [DESIGN.md §8](DESIGN.md#8-results-and-how-far-this-is-from-the-record),
 together with a ranked roadmap of what would actually close it.
