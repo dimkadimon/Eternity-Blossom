@@ -1,0 +1,5 @@
+instance,config,seed,seconds,matched,max,iterations,blossom_passes,blossom_gain,assign_passes,assign_gain
+e2-16x16,full,1,25,432,480,13598546,674,9762,67,222
+e2-16x16,noblossom,1,25,433,480,13310040,0,0,66,588
+e2-16x16,noassign,1,25,427,480,13463353,668,9402,67,34
+e2-16x16,plain,1,25,432,480,13972706,0,0,69,64

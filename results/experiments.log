@@ -1,0 +1,10 @@
+== e2-16x16 (data/e2pieces.txt g8x8:instances/gen8x8.txt g10x10:instances/gen10x10.txt) ==
+  e2-16x16 full seed=1 -> ?/?
+  e2-16x16 noblossom seed=1 -> ?/?
+  e2-16x16 noassign seed=1 -> ?/?
+  e2-16x16 plain seed=1 -> ?/?
+  e2-16x16 full seed=2 -> ?/?
+  e2-16x16 noblossom seed=2 -> ?/?
+  e2-16x16 noassign seed=2 -> ?/?
+  e2-16x16 plain seed=2 -> ?/?
+wrote results/experiments.csv

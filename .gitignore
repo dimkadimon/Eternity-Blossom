@@ -1,0 +1,12 @@
+# build outputs
+build/
+build-*/
+cmake-build-*/
+out/
+# fetched dependency (GPL-3.0; cloned at configure time, never committed)
+blossom-vi/
+# scratch
+*.o
+*.a
+__pycache__/
+.DS_Store
