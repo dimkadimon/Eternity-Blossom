@@ -154,6 +154,14 @@ int CmdSolve(const Args& a) {
     sp.assignEvery = a.getInt("--assign-every", 200000);
     sp.stallLimit = a.getInt("--stall", 300000);
     sp.perturbSwaps = a.getInt("--perturb", 24);
+    sp.useNMoveRepair = a.has("--nmove-repair");
+    sp.nmoveRounds = a.getInt("--nmove-rounds", 3);
+    sp.nmoveMaxCells = a.getInt("--nmove-cells", 48);
+    sp.perturbFromBest = !a.has("--no-perturb-best");
+    sp.adaptivePerturb = !a.has("--no-adaptive-perturb");
+    sp.perturbMax = a.getInt("--perturb-max", 160);
+    sp.perturbGrowth = a.getDouble("--perturb-growth", 0.60);
+    sp.perturbShrink = a.getDouble("--perturb-shrink", 0.70);
     // coarse-grained moves
     sp.useCoarseRotate = !a.has("--no-coarse-rotate");
     sp.coarseRotateEvery = a.getInt("--coarse-rotate-every", 10000);

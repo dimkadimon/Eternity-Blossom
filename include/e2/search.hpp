@@ -34,6 +34,7 @@
 #include "e2/operators.hpp"
 #include "e2/rotation.hpp"
 #include "e2/subsolve.hpp"
+#include "e2/nmoves.hpp"
 
 namespace e2 {
 
@@ -61,6 +62,23 @@ struct SearchParams {
     int sampleK = 1;               // proposals evaluated per move (steepest-descent = large K)
     int stallLimit = 300000;       // iterations without improvement before perturbing
     int perturbSwaps = 24;         // random swaps used as a perturbation
+
+    // ---- Iterated local search semantics of the perturbation.
+    // The search holds an incumbent (`best`) and a current state that drifts
+    // away from it, because LAHC and SA both accept worsening moves.  Kicking
+    // the DRIFTED state throws away a fresh incumbent and restarts from a
+    // board that may be far worse than the best one found, which is not what
+    // ILS does -- it kicks the incumbent.  On by default; --no-perturb-best
+    // restores the old behaviour for comparison.
+    bool perturbFromBest = true;
+    // Grow the kick while it keeps failing and shrink it when it lands, so the
+    // search spends its time at the useful kick size instead of at one fixed
+    // guess.  (A fixed size is either too small to escape or so large it is a
+    // random restart.)
+    bool adaptivePerturb = true;
+    int perturbMax = 160;          // ceiling on swaps in a single kick
+    double perturbGrowth = 0.60;   // strength added per consecutive failure
+    double perturbShrink = 0.70;   // strength multiplied by this on success
 
     // Blossom swap packet
     bool useBlossomSwaps = true;
@@ -115,6 +133,17 @@ struct SearchParams {
     int subSolveH = 2, subSolveW = 3;
     SubSolveParams subSolve;
 
+    // ---- Post-kick repair with the 2-factor / ruin-and-recreate moves.
+    // These are worth a lot on a board that is NOT converged (from random,
+    // cyccover is +530 and blast +382) and exactly zero on one that is, and a
+    // freshly kicked board is precisely the first case.  So run them right
+    // after a kick, where they can climb back far faster than swap-by-swap SA.
+    bool useNMoveRepair = false;
+    int nmoveRounds = 3;           // rounds of each operator per kick
+    int nmoveMaxCells = 48;        // cell cap handed to the two operators
+    CycleCoverParams cyccover;
+    BlastParams blast;
+
     int wBorder = 8;
     bool verbose = false;
     bool trace = false;   // print (seconds, score) as the search progresses
@@ -153,6 +182,10 @@ struct SearchStats {
     long long rotBoundCalls = 0;
     long long rotBoundTriggers = 0;   // times the bound killed the assignment
     long long rotBoundBest = 1 << 30; // smallest upper bound on matched edges seen
+
+    long long nmoveRounds = 0;
+    long long blastImproved = 0;
+    long long cycImproved = 0;
 
     long long subSolveRuns = 0;
     long long subSolveImproved = 0;

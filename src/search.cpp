@@ -148,6 +148,10 @@ SearchOutcome SearchOnce(const Puzzle& pz, const SearchParams& params,
 
     long long sinceImprove = 0;
     long long iters = 0;
+    // kick size actually used, and how many kicks in a row have failed
+    double kickSize = (double)std::max(1, params.perturbSwaps);
+    int kickFails = 0;
+    long long lastBest = best;   // best as of the previous kick
     const auto deadline = t0 + std::chrono::duration<double>(params.timeLimitSeconds);
     std::uniform_real_distribution<double> U(0.0, 1.0);
     const bool useSA = (params.accept == AcceptMode::SA);
@@ -512,7 +516,30 @@ SearchOutcome SearchOnce(const Puzzle& pz, const SearchParams& params,
 
         // Perturbation to escape a deep local optimum.
         if (sinceImprove > params.stallLimit) {
-            for (int k = 0; k < params.perturbSwaps; ++k) {
+            // ---- learn the kick size from whether the LAST one worked
+            if (params.adaptivePerturb) {
+                if (best < lastBest) {
+                    kickSize = std::max(1.0, kickSize * params.perturbShrink);
+                    kickFails = 0;
+                } else {
+                    ++kickFails;
+                    kickSize = std::min((double)params.perturbMax,
+                                        kickSize * (1.0 + params.perturbGrowth));
+                }
+            } else {
+                kickSize = (double)std::max(1, params.perturbSwaps);
+            }
+            lastBest = best;
+            const int nKick = (int)(kickSize + U(rng));   // randomised rounding
+
+            // ---- kick the INCUMBENT, not the drifted state.  Without this the
+            // search discards its best board every time it stalls and restarts
+            // from wherever LAHC/SA happened to have wandered to.
+            if (params.perturbFromBest) {
+                b.load(bestPc, bestRt);
+                cost = b.cost;
+            }
+            for (int k = 0; k < nKick; ++k) {
                 const int u = (int)(rng() % pz.ncells);
                 int v = (int)(rng() % pz.ncells);
                 if (u == v) continue;
@@ -538,6 +565,33 @@ SearchOutcome SearchOnce(const Puzzle& pz, const SearchParams& params,
             ++st.restarts;
             sinceImprove = 0;
             rebuildIndex();
+
+            // ---- repair the kicked board with the strong exact moves.  They
+            // are worthless on a converged board and very strong on a damaged
+            // one, so this is the one place in the loop where they pay.
+            if (params.useNMoveRepair) {
+                for (int round = 0; round < params.nmoveRounds; ++round) {
+                    BlastParams bp = params.blast;
+                    bp.maxCells = params.nmoveMaxCells;
+                    bp.acceptOnlyImproving = true;
+                    BlastResult br = BlastPass(b, bp, &st.matching);
+                    if (br.actualGain > 0) { ++st.blastImproved; cost = b.cost; }
+
+                    CycleCoverParams cp = params.cyccover;
+                    cp.maxCells = params.nmoveMaxCells;
+                    cp.acceptOnlyImproving = true;
+                    CycleCoverResult cr = CycleCoverPass(b, cp, &st.matching);
+                    if (cr.actualGain > 0) { ++st.cycImproved; cost = b.cost; }
+
+                    if (br.actualGain <= 0 && cr.actualGain <= 0) break;
+                    ++st.nmoveRounds;
+                    rebuildIndex();
+                }
+                if (cost < best) {
+                    best = cost; bestPc = b.pc; bestRt = b.rt; sinceImprove = 0;
+                }
+                std::fill(hist.begin(), hist.end(), cost);
+            }
         }
     }
 done:
