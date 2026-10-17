@@ -68,7 +68,12 @@ cloned automatically at configure time (or point CMake at a local checkout with
 | `bench-subsolve` | compare the branch-and-bound lower bounds on identical problems |
 | `dissect` | exact Hungarian reassignment over a library of dissections |
 | `polish` | run the exact operators on an existing board |
-| `selftest` | six correctness checks, each verified against brute force |
+| `tjoin` | **T-join moves** — connect unhappy cells with a minimum-weight T-join, rotate along each chain |
+| `cyccover` | **2-factor cycle cover** — Tutte's gadget + Blossom, rotate pieces around cycles |
+| `blast` | **matching-guided ruin & recreate** — Blossom picks the ruin set, Hungarian repairs it exactly |
+| `pop` | memetic search: population + rectangular crossover with exact repair |
+| `certify` | **Blossom VI dual / odd-set certificate**: was the non-bipartite core load-bearing? |
+| `selftest` | twelve correctness checks, each verified against brute force |
 
 ```
 solve options
@@ -90,6 +95,11 @@ solve options
   --trace            print progress
   --json             machine-readable summary
 ```
+
+The four matching-driven moves (`tjoin`, `cyccover`, `blast`, `pop`) all take
+`--board FILE` to work on an existing board, or `--random` to start from a
+scrambled one, plus `--time SEC` and `--rounds N`. `certify` additionally takes
+`--synthetic N` (see below).
 
 Recommended starting point on the real puzzle:
 

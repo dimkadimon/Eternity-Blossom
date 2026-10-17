@@ -154,6 +154,65 @@ bool HaveBlossomVI() {
 #endif
 }
 
+bool MinWeightPerfectMatchingCertified(int n, const std::vector<WEdge>& edges,
+                                       std::vector<int>& mate, long long& weight,
+                                       MatchingCertificate& cert,
+                                       MatchingStats* stats) {
+    cert = MatchingCertificate{};
+#ifdef E2_HAVE_BLOSSOM_VI
+    const auto t0 = std::chrono::steady_clock::now();
+    bool ok = false;
+    try {
+        SolverParameters params;
+        params.compute_dual_certificate = true;
+        MWPMSolver solver(edges, params);
+        solver.FindMinPerfectMatching();
+        mate.assign(n, -1);
+        for (const auto& [u, v] : solver.Matching()) { mate[u] = v; mate[v] = u; }
+        weight = solver.primal_objective;
+        cert.primal = solver.primal_objective;
+        cert.dual = solver.dual_objective;
+        cert.blossoms = solver.DualCertificate();
+
+        // Blossom VI reports every live node, singletons included, in a forest
+        // given by parent pointers.  A strictly positive dual marks a genuine
+        // blossom (an odd set that had to be contracted) rather than a plain
+        // vertex; the depth of the forest says how deeply blossoms nested.
+        cert.blossomCount = (int)cert.blossoms.size();
+        std::vector<int> parent(cert.blossomCount, -1);
+        for (size_t i = 0; i < cert.blossoms.size(); ++i) {
+            const auto& [idx, dual4, par] = cert.blossoms[i];
+            (void)idx;
+            if (dual4 > 0) ++cert.oddBlossoms;
+            if (par >= 0 && par < cert.blossomCount) parent[i] = par;
+        }
+        std::vector<int> depth(cert.blossomCount, 0);
+        for (int i = 0; i < cert.blossomCount; ++i) {
+            int d = 0, v = i, guard = 0;
+            while (parent[v] >= 0 && guard++ <= cert.blossomCount) { ++d; v = parent[v]; }
+            depth[i] = d;
+            cert.maxDepth = std::max(cert.maxDepth, d);
+        }
+        // primal == dual is exactly the certificate of optimality
+        cert.valid = (cert.primal == cert.dual);
+        ok = true;
+    } catch (...) {
+        ok = false;
+    }
+    if (stats) {
+        stats->calls += ok ? 1 : 0;
+        stats->totalVertices += n;
+        stats->totalEdges += (long long)edges.size();
+        stats->seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    }
+    if (ok) return true;
+#endif
+    // No Blossom VI (or the solve failed): an ordinary solve still gives the
+    // matching, just not a certificate.  Never claim one we do not have.
+    (void)stats;
+    return MinWeightPerfectMatching(n, edges, mate, weight, stats);
+}
+
 std::string MatchingEngineName() {
 #ifdef E2_HAVE_BLOSSOM_VI
     return "Blossom-VI (Arkhipov & Kolmogorov, arXiv:2604.20351)";

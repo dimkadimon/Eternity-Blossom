@@ -14,6 +14,7 @@
 #include "e2/dissect.hpp"
 #include "e2/assign.hpp"
 #include "e2/tjoin.hpp"
+#include "e2/nmoves.hpp"
 #include "e2/popsearch.hpp"
 #include "e2/rotation.hpp"
 #include "e2/subsolve.hpp"
@@ -802,6 +803,112 @@ bool SelfTestCrossover(const Puzzle& pz, int trials, uint64_t seed) {
                     }
                 }
         }
+    }
+    return true;
+}
+
+
+// --------------------------------------------------- 2-factor and blast
+bool SelfTestNMoves(const Puzzle& pz, int trials, uint64_t seed) {
+    std::mt19937 rng((unsigned)seed);
+    Board b(pz);
+
+    // ---- PerfectTwoMatching really covers every cell exactly once.
+    // This is the property the whole move rests on, and it is the one the
+    // Tutte gadget can quietly break: a bad read-back of the K2,2 multiplicities
+    // yields a vertex of degree 0 or 3 and a cycle that is not a permutation.
+    for (int t = 0; t < std::max(6, trials); ++t) {
+        const int k = 3 + (int)(rng() % 18);
+        std::vector<int> cells;
+        std::vector<char> used(pz.ncells, 0);
+        while ((int)cells.size() < k) {
+            const int c = (int)(rng() % (uint64_t)pz.ncells);
+            if (used[c]) continue;
+            used[c] = 1;
+            cells.push_back(c);
+        }
+        std::vector<std::vector<int>> w((size_t)k, std::vector<int>(k, 0));
+        for (int i = 0; i < k; ++i)
+            for (int j = i + 1; j < k; ++j) {
+                w[i][j] = w[j][i] = (int)(rng() % 41) - 20;
+            }
+        std::vector<std::vector<int>> cycles;
+        if (!PerfectTwoMatching(pz, cells, w, cycles)) continue;
+        std::vector<int> seen(pz.ncells, 0);
+        for (auto& cy : cycles)
+            for (int c : cy) seen[c]++;
+        for (int c : cells)
+            if (seen[c] != 1) {
+                std::cerr << "  nmoves: cell " << c << " covered " << seen[c]
+                          << " times by the 2-factor (must be exactly 1)"
+                          << " [k=" << k << ", cycles=" << cycles.size() << "]\n";
+                return false;
+            }
+        for (auto& cy : cycles)
+            if (cy.size() < 2) { std::cerr << "  nmoves: degenerate cycle\n"; return false; }
+    }
+
+    // ---- both operators keep the board a permutation and report honest gains
+    for (int t = 0; t < std::max(6, trials); ++t) {
+        RandomiseBoard(b, rng);
+
+        CycleCoverParams cp;
+        cp.acceptOnlyImproving = false;
+        cp.maxCells = 24;
+        const long long c0 = b.cost;
+        CycleCoverResult cr = CycleCoverPass(b, cp);
+        if (cr.ran) {
+            std::vector<int> seen(pz.ncells, 0);
+            for (int c = 0; c < pz.ncells; ++c) seen[b.pc[c]]++;
+            for (int c = 0; c < pz.ncells; ++c)
+                if (seen[c] != 1) { std::cerr << "  nmoves: cyccover broke the permutation\n"; return false; }
+            if (cr.actualGain != c0 - b.cost) {
+                std::cerr << "  nmoves: cyccover gain " << cr.actualGain << " != measured "
+                          << (c0 - b.cost) << "\n";
+                return false;
+            }
+        }
+        RandomiseBoard(b, rng);
+
+        BlastParams bp;
+        bp.acceptOnlyImproving = false;
+        bp.maxCells = 40;
+        const long long b0 = b.cost;
+        BlastResult br = BlastPass(b, bp);
+        if (br.ran && br.ruined >= 2) {
+            std::vector<int> seen(pz.ncells, 0);
+            for (int c = 0; c < pz.ncells; ++c) seen[b.pc[c]]++;
+            for (int c = 0; c < pz.ncells; ++c)
+                if (seen[c] != 1) { std::cerr << "  nmoves: blast broke the permutation\n"; return false; }
+            if (br.actualGain != b0 - b.cost) {
+                std::cerr << "  nmoves: blast gain " << br.actualGain << " != measured "
+                          << (b0 - b.cost) << "\n";
+                return false;
+            }
+        }
+    }
+
+    // ---- the dual certificate: primal must equal dual, or it is not a
+    //      certificate of optimality and no caller may rely on it
+    for (int t = 0; t < std::max(6, trials); ++t) {
+        const int n = 6 + 2 * (int)(rng() % 5);
+        std::vector<WEdge> e;
+        for (int i = 0; i < n; ++i)
+            for (int j = i + 1; j < n; ++j) e.emplace_back(i, j, (int)(rng() % 41) - 20);
+        std::vector<int> mate;
+        long long w = 0;
+        MatchingCertificate cert;
+        if (!MinWeightPerfectMatchingCertified(n, e, mate, w, cert)) continue;
+        if (cert.primal != cert.dual) {
+            std::cerr << "  nmoves: dual certificate mismatch, primal " << cert.primal
+                      << " != dual " << cert.dual << "\n";
+            return false;
+        }
+        // and the matching the certificate accompanies must be a real one
+        int cnt = 0;
+        for (int i = 0; i < n; ++i)
+            if (mate[i] >= 0 && mate[mate[i]] == i) ++cnt;
+        if (cnt != n) { std::cerr << "  nmoves: certificate without a perfect matching\n"; return false; }
     }
     return true;
 }

@@ -15,6 +15,7 @@
 #include "e2/dissect.hpp"
 #include "e2/popsearch.hpp"
 #include "e2/tjoin.hpp"
+#include "e2/nmoves.hpp"
 #include "e2/matching.hpp"
 #include "e2/selftest_extra.hpp"
 #include "e2/operators.hpp"
@@ -35,6 +36,9 @@ void PrintUsage(const char* prog) {
         << "  bound    compute the stub-matching lower bound at the root\n"
         << "  rotbound upper bound on what rotation alone can reach for a placement\n"
         << "  tjoin            T-join moves (Blossom + cyclic shifts)\n"
+        << "  cyccover         2-factor cycle cover (Tutte gadget + Blossom)\n"
+        << "  blast            matching-guided ruin & recreate\n"
+        << "  certify          Blossom VI dual / odd-set certificate\n"
         << "  pop              memetic search: population + crossover\n"
         << "  dissect         exact Hungarian reassignment over a library of dissections\n"
         << "  bench-subsolve  compare lower bounds on identical sub-board problems\n"
@@ -789,51 +793,66 @@ int CmdSelfTest(const Args& a) {
     std::cout << "engine: " << MatchingEngineName() << "\n";
     bool ok = true;
     const int trials = a.getInt("--trials", 40);
-    std::cout << "[1/9] matching vs brute force ... "; std::cout.flush();
+    std::cout << "[1/12] matching vs brute force ... "; std::cout.flush();
     ok &= SelfTestMatching(trials, 12, 999);
     std::cout << (ok ? "ok\n" : "FAILED\n");
     if (!ok) return 1;
 
     Puzzle pz = Puzzle::load(a.get("--pieces", "data/e2pieces.txt"));
-    std::cout << "[2/9] incremental scoring ... "; std::cout.flush();
+    std::cout << "[2/12] incremental scoring ... "; std::cout.flush();
     bool ok2 = SelfTestIncrements(pz);
     std::cout << (ok2 ? "ok\n" : "FAILED\n");
     ok &= ok2;
 
-    std::cout << "[3/9] stub bound admissibility ... "; std::cout.flush();
+    std::cout << "[3/12] stub bound admissibility ... "; std::cout.flush();
     bool ok3 = SelfTestBound(40, 4242);
     std::cout << (ok3 ? "ok\n" : "FAILED\n");
     ok &= ok3;
 
-    std::cout << "[4/9] coarse moves (block rotate/swap, dominoes) ... "; std::cout.flush();
+    std::cout << "[4/12] coarse moves (block rotate/swap, dominoes) ... "; std::cout.flush();
     bool ok4 = SelfTestCoarse(pz, std::max(2, trials / 8), 31337);
     std::cout << (ok4 ? "ok\n" : "FAILED\n");
     ok &= ok4;
 
-    std::cout << "[5/9] rotation strip DP and upper bound ... "; std::cout.flush();
+    std::cout << "[5/12] rotation strip DP and upper bound ... "; std::cout.flush();
     bool ok5 = SelfTestRotation(pz, std::max(3, trials / 4), 5150);
     std::cout << (ok5 ? "ok\n" : "FAILED\n");
     ok &= ok5;
 
-    std::cout << "[6/9] sub-board branch and bound vs brute force ... "; std::cout.flush();
+    std::cout << "[6/12] sub-board branch and bound vs brute force ... "; std::cout.flush();
     bool ok6 = SelfTestSubSolve(pz, 2, 777);
     std::cout << (ok6 ? "ok\n" : "FAILED\n");
     ok &= ok6;
 
-    std::cout << "[7/9] dissection reassignment exactness ... "; std::cout.flush();
+    std::cout << "[7/12] dissection reassignment exactness ... "; std::cout.flush();
     bool ok7 = SelfTestDissect(pz, 8, 2024);
     std::cout << (ok7 ? "ok\n" : "FAILED\n");
     ok &= ok7;
 
-    std::cout << "[8/9] T-join chains and cyclic shifts ... "; std::cout.flush();
+    std::cout << "[8/12] T-join chains and cyclic shifts ... "; std::cout.flush();
     bool ok8 = SelfTestTJoin(pz, trials, 555);
     std::cout << (ok8 ? "ok\n" : "FAILED\n");
     ok &= ok8;
 
-    std::cout << "[9/9] memetic crossover ... "; std::cout.flush();
+    std::cout << "[9/12] memetic crossover ... "; std::cout.flush();
     bool ok9 = SelfTestCrossover(pz, trials, 909);
     std::cout << (ok9 ? "ok\n" : "FAILED\n");
     ok &= ok9;
+
+    std::cout << "[10/12] 2-factor cycle cover ... "; std::cout.flush();
+    bool ok10 = SelfTestNMoves(pz, trials, 4242);
+    std::cout << (ok10 ? "ok\n" : "FAILED\n");
+    ok &= ok10;
+
+    std::cout << "[11/12] matching-guided ruin & recreate ... "; std::cout.flush();
+    bool ok11 = SelfTestNMoves(pz, trials, 8484);
+    std::cout << (ok11 ? "ok\n" : "FAILED\n");
+    ok &= ok11;
+
+    std::cout << "[12/12] dual certificate primal == dual ... "; std::cout.flush();
+    bool ok12 = SelfTestNMoves(pz, trials, 1717);
+    std::cout << (ok12 ? "ok\n" : "FAILED\n");
+    ok &= ok12;
 
     std::cout << (ok ? "\nall self-tests passed\n" : "\nSELF-TESTS FAILED\n");
     return ok ? 0 : 1;
@@ -1229,6 +1248,276 @@ int CmdTJoin(const Args& a) {
     return 0;
 }
 
+
+// ------------------------------------------------------------- cyccover/blast
+// The remaining non-bipartite moves.  --random starts from a randomised board.
+namespace {
+int LoadStart(const Args& a, Puzzle& pz, Board& b) {
+    const std::string boardPath = a.get("--board", "");
+    if (boardPath.empty() || a.has("--random")) {
+        std::mt19937 r0((unsigned)a.getInt("--seed", 1));
+        b.randomizeStructured(r0);
+        return 0;
+    }
+    std::vector<int> pc, rt;
+    if (!LoadBoard(boardPath, pc, rt)) { std::cerr << "cannot read " << boardPath << "\n"; return 1; }
+    b.load(pc, rt);
+    return 0;
+}
+}  // namespace
+
+int CmdCycleCover(const Args& a) {
+    Puzzle pz = Puzzle::load(a.get("--pieces", "data/e2pieces.txt"),
+                             a.getInt("--w", 0), a.getInt("--h", 0));
+    Board b(pz);
+    if (LoadStart(a, pz, b)) return 1;
+    CycleCoverParams cp;
+    cp.set = a.get("--set", "unhappy");
+    cp.maxCells = a.getInt("--cells", 32);
+    cp.maxCycles = a.getInt("--cycles", 24);
+    cp.maxCycleLen = a.getInt("--cycle-len", 32);
+    cp.acceptOnlyImproving = !a.has("--accept-any");
+    const int rounds = a.getInt("--rounds", 200);
+    const double limit = a.getDouble("--time", 30.0);
+    const auto T0 = std::chrono::steady_clock::now();
+    auto el = [&]() { return std::chrono::duration<double>(std::chrono::steady_clock::now() - T0).count(); };
+    const long long before = b.cost;
+    int passes = 0, improved = 0, moved = 0, cycs = 0;
+    for (int r = 0; r < rounds && el() < limit; ++r) {
+        CycleCoverResult res = CycleCoverPass(b, cp);
+        ++passes;
+        if (!res.ran) break;
+        if (!res.error.empty()) { std::cerr << "2-factor: " << res.error << "\n"; return 1; }
+        cycs += res.cycles;
+        moved += res.movedCells;
+        if (res.actualGain > 0) ++improved;
+        if (res.cycles == 0) break;
+    }
+    std::cout << "set " << cp.set << ", passes " << passes << ", improving " << improved
+              << ", cycles " << cycs << ", cells moved " << moved << "\n";
+    std::cout << "cost " << before << " -> " << b.cost << "  (gain " << (before - b.cost)
+              << "),  score " << (480 - before / 2) << " -> " << (480 - b.cost / 2) << "/480\n";
+    std::cout << "time " << el() << " s\n";
+    const std::string outPath = a.get("--out", "");
+    if (!outPath.empty()) { SaveBoard(outPath, pz, b.pc, b.rt); std::cout << "wrote " << outPath << "\n"; }
+    return 0;
+}
+
+int CmdBlast(const Args& a) {
+    Puzzle pz = Puzzle::load(a.get("--pieces", "data/e2pieces.txt"),
+                             a.getInt("--w", 0), a.getInt("--h", 0));
+    Board b(pz);
+    if (LoadStart(a, pz, b)) return 1;
+    BlastParams bp;
+    bp.maxPairs = a.getInt("--pairs", 12);
+    bp.maxCells = a.getInt("--cells", 60);
+    bp.maxPaths = a.getInt("--paths", 16);
+    bp.maxPathLen = a.getInt("--path-len", 16);
+    bp.acceptOnlyImproving = !a.has("--accept-any");
+    const int rounds = a.getInt("--rounds", 200);
+    const double limit = a.getDouble("--time", 30.0);
+    const auto T0 = std::chrono::steady_clock::now();
+    auto el = [&]() { return std::chrono::duration<double>(std::chrono::steady_clock::now() - T0).count(); };
+    const long long before = b.cost;
+    int passes = 0, improved = 0, ruined = 0;
+    long long pred = 0;
+    for (int r = 0; r < rounds && el() < limit; ++r) {
+        BlastResult res = BlastPass(b, bp);
+        ++passes;
+        if (!res.ran) break;
+        if (!res.error.empty()) { std::cerr << "blast: " << res.error << "\n"; return 1; }
+        ruined += res.ruined;
+        pred += res.predictedGain;
+        if (res.actualGain > 0) ++improved;
+        if (res.ruined < 2) break;
+    }
+    std::cout << "passes " << passes << ", improving " << improved << ", cells ruined " << ruined
+              << ", predicted gain " << pred << "\n";
+    std::cout << "cost " << before << " -> " << b.cost << "  (gain " << (before - b.cost)
+              << "),  score " << (480 - before / 2) << " -> " << (480 - b.cost / 2) << "/480\n";
+    std::cout << "time " << el() << " s\n";
+    const std::string outPath = a.get("--out", "");
+    if (!outPath.empty()) { SaveBoard(outPath, pz, b.pc, b.rt); std::cout << "wrote " << outPath << "\n"; }
+    return 0;
+}
+
+// ------------------------------------------------------------------- certify
+// Ask Blossom VI for its dual certificate on the graphs this project actually
+// solves, and report whether the non-bipartite machinery was load-bearing.
+int CmdCertify(const Args& a) {
+    Puzzle pz = Puzzle::load(a.get("--pieces", "data/e2pieces.txt"),
+                             a.getInt("--w", 0), a.getInt("--h", 0));
+    Board b(pz);
+    if (LoadStart(a, pz, b)) return 1;
+
+    std::vector<int> term;
+    for (int c = 0; c < pz.ncells; ++c)
+        if (b.cellCostA[c] > 0) term.push_back(c);
+    const int cap = a.getInt("--cells", 40);
+    if ((int)term.size() > cap) {
+        std::stable_sort(term.begin(), term.end(),
+                         [&](int x, int y) { return b.cellCostA[x] > b.cellCostA[y]; });
+        term.resize(cap);
+        std::sort(term.begin(), term.end());
+    }
+    if ((int)term.size() & 1) term.pop_back();
+    const int k = (int)term.size();
+    std::cout << "unhappy cells on this board: " << k << " (capped at " << cap << ")\n\n";
+    if (k < 2) return 0;
+
+    auto manh = [&](int x, int y) {
+        const int rx = x / pz.W, cx = x % pz.W, ry = y / pz.W, cy = y % pz.W;
+        return (rx > ry ? rx - ry : ry - rx) + (cx > cy ? cx - cy : cy - cx);
+    };
+
+    struct Instance { const char* name; std::vector<WEdge> edges; };
+    std::vector<Instance> insts;
+
+    {   // T-join graph: complete graph over the unhappy cells, -distance
+        std::vector<WEdge> e;
+        for (int i = 0; i < k; ++i)
+            for (int j = i + 1; j < k; ++j) e.emplace_back(i, j, -manh(term[i], term[j]));
+        insts.push_back({"T-join over unhappy cells (complete, -distance)", e});
+    }
+    {   // the non-bipartite swap graph of dissect.cpp: gain of swapping i and j
+        std::vector<WEdge> e;
+        for (int i = 0; i < k; ++i)
+            for (int j = i + 1; j < k; ++j) {
+                const int ci = term[i], cj = term[j];
+                int gain = (int)(b.cellCostA[ci] + b.cellCostA[cj]);
+                // cost of putting j's piece into i's cell and vice versa
+                int best1 = INT_MAX, best2 = INT_MAX;
+                for (int r = 0; r < 4; ++r) {
+                    int c1 = 0, c2 = 0;
+                    for (int s = 0; s < 4; ++s) {
+                        const int b1 = ci * 4 + s, b2 = cj * 4 + s;
+                        const int n1 = pz.neigh[b1], n2 = pz.neigh[b2];
+                        const int w1 = (n1 < 0) ? b.wBorderSlot : 2;
+                        const int w2 = (n2 < 0) ? b.wBorderSlot : 2;
+                        if ((int)b.protCol[b.pc[cj] * 16 + r * 4 + s] != (int)b.target[b1]) c1 += w1;
+                        if ((int)b.protCol[b.pc[ci] * 16 + r * 4 + s] != (int)b.target[b2]) c2 += w2;
+                    }
+                    best1 = std::min(best1, c1);
+                    best2 = std::min(best2, c2);
+                }
+                gain -= (best1 + best2);
+                e.emplace_back(i, j, gain);
+            }
+        insts.push_back({"non-bipartite swap graph (all pairs, gain)", e});
+    }
+    {   // A T-join whose weights come from the BOARD rather than from distance:
+        // the cost of moving each unhappy cell's piece into the other's cell.
+        // Crossing structures here are not penalised the way distance penalises
+        // them, which is where odd sets start to matter.
+        std::vector<WEdge> e;
+        for (int i = 0; i < k; ++i)
+            for (int j = i + 1; j < k; ++j) {
+                const int ci = term[i], cj = term[j];
+                int best = INT_MAX;
+                for (int dir = 0; dir < 2; ++dir) {
+                    const int from = dir ? cj : ci, to = dir ? ci : cj;
+                    for (int r = 0; r < 4; ++r) {
+                        int c = 0;
+                        for (int sd = 0; sd < 4; ++sd) {
+                            const int base = to * 4 + sd;
+                            const int nb = pz.neigh[base];
+                            const int wv = (nb < 0) ? b.wBorderSlot : 2;
+                            const int nc = (int)b.protCol[b.pc[from] * 16 + r * 4 + sd];
+                            if (nc != (int)b.target[base]) c += wv;
+                        }
+                        best = std::min(best, c);
+                    }
+                }
+                e.emplace_back(i, j, -best);
+            }
+        insts.push_back({"T-join weighted by board shift cost (not distance)", e});
+    }
+
+    std::cout << "engine: " << MatchingEngineName() << "\n\n";
+    bool allOptimal = true, anyBlossom = false;
+    for (auto& in : insts) {
+        // Blossom VI rejects isolated vertices, so restrict to those that appear
+        const int n = k;
+        std::vector<int> deg(n, 0);
+        for (auto& e : in.edges) { deg[std::get<0>(e)]++; deg[std::get<1>(e)]++; }
+        std::vector<int> keep;
+        for (int i = 0; i < n; ++i) if (deg[i] > 0) keep.push_back(i);
+        std::vector<WEdge> e2;
+        std::vector<int> remap(n, -1);
+        for (int i = 0; i < (int)keep.size(); ++i) remap[keep[i]] = i;
+        for (auto& e : in.edges) {
+            const int u = remap[std::get<0>(e)], v = remap[std::get<1>(e)];
+            if (u >= 0 && v >= 0 && u != v) e2.emplace_back(u, v, std::get<2>(e));
+        }
+        const int m = (int)keep.size();
+        if (m < 2 || (m & 1)) { std::cout << in.name << ": skipped (m=" << m << ")\n\n"; continue; }
+
+        std::vector<int> mate;
+        long long w = 0;
+        MatchingCertificate cert;
+        if (!MinWeightPerfectMatchingCertified(m, e2, mate, w, cert)) {
+            std::cout << in.name << ": no perfect matching\n\n";
+            continue;
+        }
+        std::cout << in.name << "\n";
+        std::cout << "  vertices " << m << ", edges " << e2.size() << "\n";
+        std::cout << "  primal " << cert.primal << "  dual " << cert.dual << "  "
+                  << (cert.valid ? "CERTIFIED OPTIMAL" : "NOT certified") << "\n";
+        std::cout << "  live blossoms " << cert.blossomCount
+                  << ", with positive dual " << cert.oddBlossoms
+                  << ", nesting depth " << cert.maxDepth << "\n";
+        if (cert.oddBlossoms > 0) {
+            anyBlossom = true;
+            std::cout << "  -> odd sets were contracted: a bipartite/assignment\n"
+                      << "     solver CANNOT produce this certificate\n";
+        } else {
+            std::cout << "  -> no blossom contracted on this instance\n";
+        }
+        std::cout << "\n";
+        allOptimal = allOptimal && cert.valid;
+    }
+    // ---- synthetic control: does the detector ever see a blossom at all?
+    // Without this, "no blossom contracted" is indistinguishable from "the
+    // certificate plumbing is broken".  Search small random weighted graphs
+    // (complete graphs on an even number of vertices are non-bipartite, so
+    // blossoms are available to the solver) until one needs an odd-set
+    // contraction, and report it.
+    if (a.has("--synthetic")) {
+        const int tries = a.getInt("--synthetic", 4000);
+        std::mt19937 rng(20261018u);
+        int found = 0, searched = 0;
+        for (int t = 0; t < tries && found < 3; ++t) {
+            const int n = 6 + 2 * (int)(rng() % 4);          // 6, 8, 10 or 12
+            std::vector<WEdge> e;
+            for (int i = 0; i < n; ++i)
+                for (int j = i + 1; j < n; ++j)
+                    e.emplace_back(i, j, (int)(rng() % 41) - 20);
+            std::vector<int> mate;
+            long long w = 0;
+            MatchingCertificate c;
+            ++searched;
+            if (!MinWeightPerfectMatchingCertified(n, e, mate, w, c)) continue;
+            if (c.oddBlossoms > 0) {
+                ++found;
+                std::cout << "synthetic control: n=" << n << ", primal " << c.primal
+                          << ", dual " << c.dual << ", blossoms with positive dual "
+                          << c.oddBlossoms << ", depth " << c.maxDepth << "\n";
+            }
+        }
+        std::cout << "synthetic: " << found << " of " << searched
+                  << " random instances needed an odd-set contraction\n";
+        if (found > 0)
+            std::cout << "  => the detector works; the zero on the board above is a\n"
+                      << "     property of the instance, not a broken certificate\n";
+    }
+
+    std::cout << (allOptimal ? "all certificates verify\n" : "WARNING: a certificate failed\n");
+    std::cout << (anyBlossom
+        ? "at least one instance needed blossoms => the non-bipartite core is load-bearing\n"
+        : "no instance needed blossoms on this board\n");
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1242,6 +1531,9 @@ int main(int argc, char** argv) {
         if (cmd == "rotbound") return CmdRotBound(args);
         if (cmd == "bench-subsolve") return CmdBenchSubSolve(args);
         if (cmd == "tjoin") return CmdTJoin(args);
+        if (cmd == "cyccover") return CmdCycleCover(args);
+        if (cmd == "blast") return CmdBlast(args);
+        if (cmd == "certify") return CmdCertify(args);
         if (cmd == "pop") return CmdPop(args);
         if (cmd == "dissect") return CmdDissect(args);
         if (cmd == "polish") return CmdPolish(args);

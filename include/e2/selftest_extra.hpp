@@ -29,6 +29,9 @@ bool SelfTestRotation(const Puzzle& pz, int trials, uint64_t seed);
 // the stub bound, to confirm the bound prunes work without pruning the optimum.
 bool SelfTestSubSolve(const Puzzle& pz, int trials, uint64_t seed);
 
+// 2-factor cycle cover and matching-guided ruin & recreate (see nmoves.hpp).
+bool SelfTestNMoves(const Puzzle& pz, int trials, uint64_t seed);
+
 // T-join chains and cyclic shifts (see tjoin.hpp).
 bool SelfTestTJoin(const Puzzle& pz, int trials, uint64_t seed);
 

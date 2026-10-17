@@ -30,6 +30,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include <vector>
 
 namespace e2 {
 
@@ -58,6 +59,35 @@ bool MinWeightPerfectMatching(int n, const std::vector<WEdge>& edges,
 bool MaxWeightMatching(int n, const std::vector<WEdge>& edges,
                        std::vector<std::pair<int, int>>& pairs, long long& weight,
                        MatchingStats* stats = nullptr);
+
+// The dual certificate Blossom VI produces alongside a matching: the LAMINAR
+// FAMILY OF BLOSSOMS (nested odd sets) with their dual variables, together with
+// the primal and dual objectives.
+//
+// This is the part of the machinery that only exists because the graphs are not
+// bipartite.  A bipartite matching needs no blossoms, so its certificate is
+// just vertex duals; every entry here with a positive dual is a blossom that
+// Edmonds' algorithm had to contract, i.e. a place where an odd set of vertices
+// could not be matched internally.  Counting them answers, per instance, the
+// question "was the non-bipartite machinery actually load-bearing, or would an
+// assignment solver have done?"  -- see `eternity-blossom certify`.
+struct MatchingCertificate {
+    bool valid = false;         // the certificate was produced and primal == dual
+    long long primal = 0;       // weight of the matching that was found
+    long long dual = 0;         // objective of the dual solution
+    // One entry per live blossom: (certificate index, dual*4, parent index or -1).
+    std::vector<std::tuple<int, int, int>> blossoms;
+    int blossomCount = 0;       // live blossoms, including singleton vertices
+    int oddBlossoms = 0;        // blossoms carrying a strictly positive dual
+    int maxDepth = 0;           // nesting depth of the blossom forest
+};
+
+// As MinWeightPerfectMatching, but additionally ask Blossom VI for its dual
+// certificate.  Costs a little extra work inside the solver.
+bool MinWeightPerfectMatchingCertified(int n, const std::vector<WEdge>& edges,
+                                       std::vector<int>& mate, long long& weight,
+                                       MatchingCertificate& cert,
+                                       MatchingStats* stats = nullptr);
 
 // True if this build is linked against Blossom VI.
 bool HaveBlossomVI();
