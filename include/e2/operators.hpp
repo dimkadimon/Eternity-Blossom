@@ -127,6 +127,8 @@ AssignResult AssignReoptimizePass(Board& b, const AssignParams& pr, MatchingStat
 struct StubBoundResult {
     int bound = 0;             // admissible lower bound on mismatches (INT_MAX if infeasible)
     bool infeasible = false;   // no completion can exist at all
+    bool heuristic = false;    // the matching engine is not exact, so `bound` is
+                               // NOT admissible and must not be used to prune
     int vertices = 0, edges = 0;
     double seconds = 0.0;
 };

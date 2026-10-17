@@ -83,6 +83,10 @@ add_library(e2_core STATIC
         src/matching.cpp
         src/operators.cpp
         src/search.cpp
+        src/coarse.cpp
+        src/rotation.cpp
+        src/subsolve.cpp
+        src/selftest_extra.cpp
         ${E2_BLOSSOM_SOURCES})
 
 target_include_directories(e2_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")

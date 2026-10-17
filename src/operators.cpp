@@ -250,6 +250,7 @@ StubBoundResult StubMatchingBound(const Puzzle& pz, const std::vector<int>& cell
                                   const std::vector<int>& pool, const std::vector<int>& req,
                                   MatchingStats* ms) {
     StubBoundResult res;
+    res.heuristic = !MatchingEngineIsExact();
     const auto t0 = std::chrono::steady_clock::now();
     (void)cells;
     const int k = (int)pool.size();

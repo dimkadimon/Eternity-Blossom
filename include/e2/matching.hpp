@@ -62,6 +62,14 @@ bool MaxWeightMatching(int n, const std::vector<WEdge>& edges,
 // True if this build is linked against Blossom VI.
 bool HaveBlossomVI();
 
+// True if MinWeightPerfectMatching is guaranteed to return a proven optimum.
+// The MIT-only fallback is an exact subset DP only up to 18 vertices and a
+// greedy + 2-opt heuristic above that, so with Blossom VI absent the answer is
+// no -- and callers that need a *bound* (rather than a good matching) must not
+// trust the result.  Using a heuristic matching as an admissible bound silently
+// prunes away real solutions.
+bool MatchingEngineIsExact();
+
 // Human readable name of the matching engine in use.
 std::string MatchingEngineName();
 

@@ -30,7 +30,10 @@
 
 #include "e2/board.hpp"
 #include "e2/matching.hpp"
+#include "e2/coarse.hpp"
 #include "e2/operators.hpp"
+#include "e2/rotation.hpp"
+#include "e2/subsolve.hpp"
 
 namespace e2 {
 
@@ -77,6 +80,41 @@ struct SearchParams {
     int regionSize = 8;
     RegionParams region;
 
+    // ---- Coarse-grained moves: rigid 2x2 / 4x4 / 8x8 blocks, and domino
+    // dissections.  A block rotation preserves how many of the block's internal
+    // edges match, so it only re-exposes the boundary; a block swap preserves
+    // both blocks' internals.  Both are large moves the fine-grained swap
+    // neighbourhood cannot reach.
+    bool useCoarseRotate = true;
+    int coarseRotateEvery = 10000;   // iterations between rotate sweeps
+    std::vector<int> coarseSides{2}; // square block sizes to use
+    bool useCoarseSwap = true;       // Blossom packet of block swaps
+    int coarseSwapEvery = 50000;
+    CoarseSwapParams coarseSwap;
+    int coarsePerturb = 0;           // random block rotations/flips per perturbation
+    int coarseDominoes = 0;          // random domino dissections to keep around
+    int coarseDominoFlips = 20000;   // mixing steps used to build each one
+
+    // ---- Exact rotation optimisation by strip DP.  Re-solves 32/48/64
+    // rotation variables at once, optimally.
+    bool useRotStrip = true;
+    int rotStripEvery = 20000;
+    int rotStripK = 2;               // strip height, 2..4 (4^4 = 256 DP states)
+    bool rotStripColumns = true;     // sweep column strips as well as row strips
+
+    // ---- Rotation-only upper bound.  Never changes the board: it answers "can
+    // this POSITION assignment still reach a perfect board by rotating alone?",
+    // and triggers a perturbation of the positions when the answer is no.
+    bool useRotBound = false;
+    int rotBoundEvery = 200000;
+    int rotBoundK = 3;
+
+    // ---- Exact sub-board branch and bound (pruned by the stub matching bound).
+    bool useSubSolve = false;
+    int subSolveEvery = 100000;
+    int subSolveH = 2, subSolveW = 3;
+    SubSolveParams subSolve;
+
     int wBorder = 8;
     bool verbose = false;
     bool trace = false;   // print (seconds, score) as the search progresses
@@ -98,6 +136,30 @@ struct SearchStats {
     long long regionNodes = 0;
     long long regionBoundCalls = 0;
     long long regionBoundPrunes = 0;
+
+    long long coarseRotateSweeps = 0;
+    long long coarseRotates = 0;
+    long long coarseRotateGain = 0;
+    long long coarseSwapPasses = 0;
+    long long coarseSwapImproved = 0;
+    long long coarseSwapPredicted = 0;
+    long long coarseSwapActual = 0;
+    long long coarseSwapPairs = 0;
+
+    long long rotStripSweeps = 0;
+    long long rotStripApplied = 0;
+    long long rotStripGain = 0;
+
+    long long rotBoundCalls = 0;
+    long long rotBoundTriggers = 0;   // times the bound killed the assignment
+    long long rotBoundBest = 1 << 30; // smallest upper bound on matched edges seen
+
+    long long subSolveRuns = 0;
+    long long subSolveImproved = 0;
+    long long subSolveExact = 0;
+    long long subSolveNodes = 0;
+    long long subSolveStubCalls = 0;
+    long long subSolveStubPrunes = 0;
     double seconds = 0.0;
     MatchingStats matching;
 };

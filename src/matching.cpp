@@ -138,6 +138,14 @@ bool FallbackMinWeightPerfectMatching(int n, const std::vector<WEdge>& edges,
 
 }  // namespace
 
+bool MatchingEngineIsExact() {
+#if E2_HAVE_BLOSSOM_VI
+    return true;
+#else
+    return false;   // exact only for n <= 18; heuristic above that
+#endif
+}
+
 bool HaveBlossomVI() {
 #ifdef E2_HAVE_BLOSSOM_VI
     return true;

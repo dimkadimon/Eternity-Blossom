@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "e2/matching.hpp"
+#include "e2/selftest_extra.hpp"
 #include "e2/operators.hpp"
 #include "e2/puzzle.hpp"
 #include "e2/search.hpp"
@@ -29,6 +30,9 @@ void PrintUsage(const char* prog) {
         << "  solve    search for a high-scoring board\n"
         << "  verify   re-score a saved board from scratch\n"
         << "  bound    compute the stub-matching lower bound at the root\n"
+        << "  rotbound upper bound on what rotation alone can reach for a placement\n"
+        << "  bench-subsolve  compare lower bounds on identical sub-board problems\n"
+        << "  polish  --board B  run the exact operators on an existing board\n"
         << "  selftest correctness checks (matching, increments, bound)\n\n"
         << "options for solve:\n"
         << "  --pieces FILE     piece file (default data/e2pieces.txt)\n"
@@ -54,6 +58,14 @@ void PrintUsage(const char* prog) {
         << "  --blossom-stall N trigger a blossom pass after N stalled iterations (default 4000)\n"
         << "  --blossom-cells N cap on candidate cells per pass (default 96)\n"
         << "  --region          enable exact region re-optimisation (branch & bound + bound)\n"
+        << "  --coarse-sides S  square block sizes for chunk moves, e.g. 2,4 (default 2)\n"
+        << "  --dominoes N      keep N random 1x2 dissections as extra move sets (default 0)\n"
+        << "  --coarse-swap-every N  Blossom packet of block swaps every N iters (default 50000)\n"
+        << "  --rot-strip-k K   height of the exact strip-rotation DP, 1..4 (default 2)\n"
+        << "  --rot-strip-every N    run the strip DP every N iterations (default 20000)\n"
+        << "  --rot-bound       enable the rotation-only upper bound oracle\n"
+        << "  --subsolve        enable exact sub-board branch & bound (stub bound pruned)\n"
+        << "  --subsolve-h H --subsolve-w W   region size (default 2x3)\n"
         << "  --region-size N   cells per region (default 8)\n"
         << "  --json            emit a machine readable summary\n";
 }
@@ -72,6 +84,7 @@ struct Args {
         auto it = opt.find(k);
         return it == opt.end() ? def : std::atof(it->second.c_str());
     }
+    bool has(const std::string& k) const { return opt.count(k) > 0; }
 };
 
 Args ParseArgs(int argc, char** argv, int start) {
@@ -124,6 +137,50 @@ int CmdSolve(const Args& a) {
     sp.assignEvery = a.getInt("--assign-every", 200000);
     sp.stallLimit = a.getInt("--stall", 300000);
     sp.perturbSwaps = a.getInt("--perturb", 24);
+    // coarse-grained moves
+    sp.useCoarseRotate = !a.has("--no-coarse-rotate");
+    sp.coarseRotateEvery = a.getInt("--coarse-rotate-every", 10000);
+    sp.useCoarseSwap = !a.has("--no-coarse-swap");
+    sp.coarseSwapEvery = a.getInt("--coarse-swap-every", 50000);
+    sp.coarsePerturb = a.getInt("--coarse-perturb", 0);
+    sp.coarseDominoes = a.getInt("--dominoes", 0);
+    sp.coarseDominoFlips = a.getInt("--domino-flips", 20000);
+    sp.coarseSwap.maxBlocks = a.getInt("--coarse-blocks", 64);
+    sp.coarseSwap.rotVariants = a.getInt("--coarse-rot-variants", 1);
+    {
+        sp.coarseSides.clear();
+        const std::string sides = a.get("--coarse-sides", "2");
+        int v = 0;
+        for (char ch : sides) {
+            if (ch >= '0' && ch <= '9') { v = v * 10 + (ch - '0'); continue; }
+            if (v > 0) sp.coarseSides.push_back(v);
+            v = 0;
+        }
+        if (v > 0) sp.coarseSides.push_back(v);
+    }
+    // exact strip-DP rotation optimisation
+    sp.useRotStrip = !a.has("--no-rot-strip");
+    sp.rotStripEvery = a.getInt("--rot-strip-every", 20000);
+    sp.rotStripK = a.getInt("--rot-strip-k", 2);
+    sp.rotStripColumns = !a.has("--no-rot-strip-cols");
+    // rotation upper bound oracle
+    sp.useRotBound = a.has("--rot-bound");
+    sp.rotBoundEvery = a.getInt("--rot-bound-every", 200000);
+    sp.rotBoundK = a.getInt("--rot-bound-k", 3);
+    // exact sub-board branch and bound
+    sp.useSubSolve = a.has("--subsolve");
+    sp.subSolveEvery = a.getInt("--subsolve-every", 100000);
+    sp.subSolveH = a.getInt("--subsolve-h", 2);
+    sp.subSolveW = a.getInt("--subsolve-w", 3);
+    sp.subSolve.stubMaxCells = a.getInt("--subsolve-stub-cells", 9);
+    sp.subSolve.maxStubCalls = a.getInt("--subsolve-stub-calls", 5000);
+    sp.subSolve.maxNodes = a.getInt("--subsolve-nodes", 2000000);
+    sp.subSolve.timeLimitSeconds = a.getDouble("--subsolve-time", 0.25);
+    sp.subSolve.proveOptimal = a.has("--subsolve-prove");
+    sp.subSolve.useStubBound = !a.has("--subsolve-no-stub");
+    sp.subSolve.useAssignBound = !a.has("--subsolve-no-assign");
+    sp.subSolve.useEdgeBound = !a.has("--subsolve-no-edge");
+
     sp.useRegionLNS = a.opt.count("--region") > 0;
     sp.regionSize = a.getInt("--region-size", 8);
     const std::string init = a.get("--init", "greedystruct");
@@ -158,6 +215,36 @@ int CmdSolve(const Args& a) {
               << "  avg vertices " << (out.stats.matching.calls ? out.stats.matching.totalVertices / out.stats.matching.calls : 0)
               << "  avg edges " << (out.stats.matching.calls ? out.stats.matching.totalEdges / out.stats.matching.calls : 0)
               << "  total " << std::setprecision(3) << out.stats.matching.seconds << "s\n";
+    if (sp.useCoarseRotate) {
+        std::cout << "coarse rotate : " << out.stats.coarseRotateSweeps << " sweeps, "
+                  << out.stats.coarseRotates << " block rotations taken, gain "
+                  << out.stats.coarseRotateGain << "  (levels: " << sp.coarseSides.size()
+                  << " square + " << sp.coarseDominoes << " domino)\n";
+    }
+    if (sp.useCoarseSwap) {
+        std::cout << "coarse swap   : " << out.stats.coarseSwapPasses << " passes (improved "
+                  << out.stats.coarseSwapImproved << "), " << out.stats.coarseSwapPairs
+                  << " pairs applied; predicted " << out.stats.coarseSwapPredicted
+                  << " vs measured " << out.stats.coarseSwapActual << "\n";
+    }
+    if (sp.useRotStrip) {
+        std::cout << "strip rot DP  : " << out.stats.rotStripSweeps << " sweeps, "
+                  << out.stats.rotStripApplied << " strips improved, gain "
+                  << out.stats.rotStripGain << "\n";
+    }
+    if (sp.useRotBound) {
+        std::cout << "rot bound     : " << out.stats.rotBoundCalls << " calls, best (smallest) "
+                  << "upper bound on matched edges " << out.stats.rotBoundBest << "/"
+                  << pz.numEdges() << ", placements abandoned " << out.stats.rotBoundTriggers << "\n";
+    }
+    if (sp.useSubSolve) {
+        std::cout << "sub-board B&B : " << out.stats.subSolveRuns << " runs ("
+                  << out.stats.subSolveExact << " proved optimal, " << out.stats.subSolveImproved
+                  << " improved), nodes " << out.stats.subSolveNodes
+                  << ", stub calls " << out.stats.subSolveStubCalls
+                  << ", stub prunes " << out.stats.subSolveStubPrunes << "\n";
+    }
+
     if (sp.useRegionLNS) {
         std::cout << "region runs   : " << out.stats.regionRuns
                   << " (improved " << out.stats.regionImproved << ")"
@@ -178,6 +265,263 @@ int CmdSolve(const Args& a) {
                   << ",\"iterations\":" << out.stats.iterations
                   << ",\"blossom_passes\":" << out.stats.blossomPasses
                   << ",\"blossom_gain\":" << out.stats.blossomTotalActual << "}\n";
+    }
+    return 0;
+}
+
+// --------------------------------------------------------------------------
+// Controlled benchmark for the sub-board branch and bound: the SAME set of
+// regions, the SAME board state, solved with each combination of lower bounds.
+// Reports nodes and seconds, and checks that every configuration reaches the
+// same optimum (a bound that prunes the optimum away is worse than useless).
+int CmdBenchSubSolve(const Args& a) {
+    Puzzle pz = Puzzle::load(a.get("--pieces", "data/e2pieces.txt"),
+                             a.getInt("--w", 0), a.getInt("--h", 0));
+    Board b(pz);
+    const std::string boardPath = a.get("--board", "");
+    if (!boardPath.empty()) {
+        std::vector<int> pc, rt;
+        if (!LoadBoard(boardPath, pc, rt)) { std::cerr << "error: cannot read board\n"; return 1; }
+        b.load(pc, rt);
+    } else {
+        std::mt19937 rng((unsigned)a.getInt("--seed", 1));
+        b.randomizeStructured(rng);
+    }
+    const int hh = a.getInt("--rh", 3), ww = a.getInt("--rw", 3);
+    const int regions = a.getInt("--regions", 100);
+    const int seed = a.getInt("--seed", 1);
+    std::mt19937 rng((unsigned)(seed * 2654435761u + 1u));
+
+    struct Case { int r0, c0; };
+    std::vector<Case> cases;
+    for (int i = 0; i < regions; ++i)
+        cases.push_back({(int)(rng() % (unsigned)(pz.H - hh + 1)),
+                         (int)(rng() % (unsigned)(pz.W - ww + 1))});
+
+    struct Config { const char* name; bool stub, assign, edge; };
+    const Config configs[] = {
+        {"all bounds        ", true,  true,  true },
+        {"- stub bound      ", false, true,  true },
+        {"- assign bound    ", true,  false, true },
+        {"- edge bound      ", true,  true,  false},
+        {"stub bound only   ", true,  false, false},
+        {"no bounds         ", false, false, false},
+    };
+
+    std::cout << "sub-board branch & bound: " << regions << " random " << hh << "x" << ww
+              << " regions (" << hh * ww << " cells), identical problems for every row\n\n";
+    std::cout << "  configuration       proved    total nodes   nodes/solve   seconds\n";
+
+    std::vector<long long> firstBest;
+    for (const Config& cf : configs) {
+        Board work = b;
+        SubSolveParams pr;
+        pr.proveOptimal = true;
+        pr.maxNodes = (long long)a.getInt("--max-nodes", 20000000) ;
+        pr.timeLimitSeconds = 1e9;
+        pr.requireImprovement = false;
+        pr.useStubBound = cf.stub;
+        pr.useAssignBound = cf.assign;
+        pr.useEdgeBound = cf.edge;
+        pr.maxStubCalls = 100000000LL;
+        pr.stubMinCells = a.getInt("--stub-min", 0);
+        long long nodes = 0, proved = 0;
+        std::vector<long long> bests;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (const Case& c : cases) {
+            const std::vector<int> cells = RectRegion(pz, c.r0, c.c0, hh, ww);
+            std::vector<int> pool(cells.size());
+            for (size_t i = 0; i < cells.size(); ++i) pool[i] = work.pc[cells[i]];
+            SubSolveResult r = SubSolveRegion(work, cells, pool, pr);
+            nodes += r.nodes;
+            if (r.exact) ++proved;
+            bests.push_back(r.regionAfter);
+        }
+        const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        if (firstBest.empty()) firstBest = bests;
+        bool same = (bests.size() == firstBest.size());
+        for (size_t i = 0; i < bests.size() && same; ++i) same = (bests[i] == firstBest[i]);
+        std::cout << "  " << cf.name << std::setw(6) << proved << "/" << regions
+                  << std::setw(14) << nodes
+                  << std::setw(14) << (nodes / std::max(1, regions))
+                  << std::setw(11) << std::setprecision(4) << secs
+                  << (same ? "" : "   <<< DIFFERENT OPTIMUM") << "\n";
+    }
+    return 0;
+}
+
+// --------------------------------------------------------------------------
+// Polish an existing board.  This is the role the new operators were actually
+// built for: not to replace a good local search, but to be run ON TOP of
+// whatever produced the board, as an independent optimiser.  Everything here is
+// exact -- each pass either lowers the true objective or leaves the board alone
+// -- so the result can only ever be better than what went in.
+int CmdPolish(const Args& a) {
+    Puzzle pz = Puzzle::load(a.get("--pieces", "data/e2pieces.txt"),
+                             a.getInt("--w", 0), a.getInt("--h", 0));
+    Board b(pz);
+    std::vector<int> pc, rt;
+    const std::string boardPath = a.get("--board", "results/best_board.txt");
+    if (!LoadBoard(boardPath, pc, rt)) { std::cerr << "error: cannot read board\n"; return 1; }
+    b.load(pc, rt);
+
+    const double limit = a.getDouble("--time", 30.0);
+    const int maxK = a.getInt("--strip-k", 4);
+    const bool doCoarse = !a.has("--no-coarse");
+    const bool doSubsolve = a.has("--subsolve");
+    const int dominoes = a.getInt("--dominoes", 4);
+    SubSolveParams ssp;
+    ssp.proveOptimal = false;
+    ssp.maxNodes = 20000000;
+    ssp.timeLimitSeconds = 0.5;
+    ssp.requireImprovement = true;
+
+    std::vector<BlockSet> sets;
+    if (doCoarse) {
+        for (int side : {2, 4, 8}) sets.push_back(MakeSquareBlocks(pz, side));
+        for (int i = 0; i < dominoes; ++i)
+            sets.push_back(MakeDominoTiling(pz, (uint64_t)(a.getInt("--seed", 1) * 7919 + 13 * i + 1)));
+    }
+
+    const long long matched0 = b.score();
+    const RotationBoundResult rb0 = RotationUpperBound(b, 4, false);
+    std::cout << "board    : " << boardPath << "\n"
+              << "before   : " << matched0 << "/" << pz.numEdges() << " matched, cost " << b.cost
+              << "\n"
+              << "ceiling  : rotation alone cannot exceed " << rb0.matchedUB << "/" << pz.numEdges()
+              << " on this placement\n\n";
+
+    const auto t0 = std::chrono::steady_clock::now();
+    std::mt19937 rng((unsigned)a.getInt("--seed", 1));
+    long long rounds = 0, stripGain = 0, coarseGain = 0, subGain = 0, strips = 0, blocks = 0, subs = 0;
+    int stale = 0;
+    while (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < limit) {
+        ++rounds;
+        long long before = b.cost;
+
+        // exact strip rotation re-optimisation, rows and columns, k = 2..maxK
+        for (int k = 2; k <= maxK; ++k) {
+            StripSweepResult sr = StripRotateSweep(b, k, false);
+            StripSweepResult sc = StripRotateSweep(b, k, true);
+            strips += sr.applied + sc.applied;
+        }
+        stripGain += before - b.cost;
+        before = b.cost;
+
+        // rigid block rotations and Blossom packets of block swaps
+        if (doCoarse) {
+            for (BlockSet& bs : sets) {
+                CoarseRotateResult cr = CoarseRotateSweep(b, bs);
+                blocks += cr.applied;
+                CoarseSwapParams csp;
+                csp.maxBlocks = 256;
+                csp.maxPairs = 20000;
+                CoarseSwapResult cs = CoarseSwapPass(b, bs, csp);
+            }
+        }
+        coarseGain += before - b.cost;
+        before = b.cost;
+
+        // exact sub-board re-optimisation
+        if (doSubsolve) {
+            const int hh = a.getInt("--subsolve-h", 3), ww = a.getInt("--subsolve-w", 3);
+            for (int attempt = 0; attempt < 40; ++attempt) {
+                const int r0 = (int)(rng() % (unsigned)(pz.H - hh + 1));
+                const int c0 = (int)(rng() % (unsigned)(pz.W - ww + 1));
+                const std::vector<int> cells = RectRegion(pz, r0, c0, hh, ww);
+                std::vector<int> pool(cells.size());
+                for (size_t i = 0; i < cells.size(); ++i) pool[i] = b.pc[cells[i]];
+                SubSolveResult r = SubSolveRegion(b, cells, pool, ssp);
+                if (r.improved) ++subs;
+            }
+        }
+        subGain += before - b.cost;
+
+        if (b.cost == before) {
+            // Nothing moved this round.  With sub-board solving on, keep going:
+            // it picks fresh random regions, so a later round can still land
+            // somewhere useful.  Otherwise two idle rounds is enough.
+            if (++stale >= (doSubsolve ? 40 : 2)) break;
+        } else {
+            stale = 0;
+        }
+        if (b.cost == 0) break;
+    }
+
+    const RotationBoundResult rb1 = RotationUpperBound(b, 4, false);
+    std::cout << "after    : " << b.score() << "/" << pz.numEdges() << " matched, cost " << b.cost
+              << "\n"
+              << "gain     : " << (b.score() - matched0) << " edges  (rounds " << rounds
+              << ", strips " << strips << ", blocks " << blocks << ", sub-boards " << subs << ")\n"
+              << "  strip DP    " << stripGain << "\n"
+              << "  coarse      " << coarseGain << "\n"
+              << "  sub-board   " << subGain << "\n"
+              << "ceiling  : now " << rb1.matchedUB << "/" << pz.numEdges() << "\n";
+
+    const BoardCheck ck = CheckBoard(pz, b.pc, b.rt);
+    std::cout << "check    : every piece once " << (ck.valid ? "yes" : "NO")
+              << ", border bad " << ck.borderBad << "\n";
+    const std::string out = a.get("--out", "");
+    if (!out.empty()) { SaveBoard(out, pz, b.pc, b.rt); std::cout << "written  : " << out << "\n"; }
+    return 0;
+}
+
+// --------------------------------------------------------------------------
+// Rotation-only upper bound.  Given a placement of the pieces, how many edges
+// can ANY choice of rotations match?  Answer: at most this many; if the answer
+// is below 480 the placement can never be completed by rotating alone.
+int CmdRotBound(const Args& a) {
+    Puzzle pz = Puzzle::load(a.get("--pieces", "data/e2pieces.txt"),
+                             a.getInt("--w", 0), a.getInt("--h", 0));
+    Board b(pz);
+    const std::string boardPath = a.get("--board", "");
+    if (!boardPath.empty()) {
+        std::vector<int> pc, rt;
+        std::string comment;
+        if (!LoadBoard(boardPath, pc, rt, &comment)) {
+            std::cerr << "error: cannot read board\n";
+            return 1;
+        }
+        b.load(pc, rt);
+    } else {
+        std::mt19937 rng((unsigned)a.getInt("--seed", 1));
+        b.randomize(rng);
+    }
+    const long long matched = b.score();
+    const long long maxE = pz.numEdges();
+    std::cout << "board         : " << pz.W << "x" << pz.H << ", " << maxE
+              << " internal edges\n";
+    std::cout << "current       : " << matched << "/" << maxE << " matched\n\n";
+    std::cout << "upper bound on what ROTATION ALONE can reach\n";
+    std::cout << "  (each bound is rigorous: group the 480 edges, solve every\n";
+    std::cout << "   group exactly, relax the constraints between groups)\n\n";
+
+    long long impossible = 0;
+    const long long eb = EdgeBoundUpper(b, &impossible);
+    long long raw = 0;
+    const long long sb = StarBoundUpper(b, &raw);
+    std::cout << "  per-edge       " << eb << "/" << maxE
+              << "   (" << impossible << " edges can never match at all)\n";
+    std::cout << "  star (1 tile + neighbours, halved)  " << sb << "/" << maxE
+              << "   (raw sum " << raw << ", counts every edge twice)\n";
+    long long best = maxE;
+    for (int k = 1; k <= 4; ++k) {
+        for (int cols = 0; cols < 2; ++cols) {
+            const RotationBoundResult r = RotationUpperBound(b, k, cols != 0);
+            if (r.matchedUB < best) best = r.matchedUB;
+            std::cout << "  strips of " << k << (cols ? " col" : " row")
+                      << (k == 1 ? " " : "s") << "     " << r.matchedUB << "/" << maxE
+                      << "   (strips " << r.stripPart << " + seams " << r.seamPart
+                      << ", " << std::setprecision(4) << r.seconds << "s)\n";
+        }
+    }
+    std::cout << "\n  best bound     " << best << "/" << maxE << "\n";
+    if (best < maxE) {
+        std::cout << "\n  => rotations alone CANNOT solve this placement: at least "
+                  << (maxE - best) << " edge" << (maxE - best == 1 ? "" : "s")
+                  << " must stay broken.\n";
+    } else {
+        std::cout << "\n  => this bound does not rule out a perfect solution by rotation.\n";
     }
     return 0;
 }
@@ -432,21 +776,36 @@ int CmdSelfTest(const Args& a) {
     std::cout << "engine: " << MatchingEngineName() << "\n";
     bool ok = true;
     const int trials = a.getInt("--trials", 40);
-    std::cout << "[1/3] matching vs brute force ... "; std::cout.flush();
+    std::cout << "[1/6] matching vs brute force ... "; std::cout.flush();
     ok &= SelfTestMatching(trials, 12, 999);
     std::cout << (ok ? "ok\n" : "FAILED\n");
     if (!ok) return 1;
 
     Puzzle pz = Puzzle::load(a.get("--pieces", "data/e2pieces.txt"));
-    std::cout << "[2/3] incremental scoring ... "; std::cout.flush();
+    std::cout << "[2/6] incremental scoring ... "; std::cout.flush();
     bool ok2 = SelfTestIncrements(pz);
     std::cout << (ok2 ? "ok\n" : "FAILED\n");
     ok &= ok2;
 
-    std::cout << "[3/3] stub bound admissibility ... "; std::cout.flush();
+    std::cout << "[3/6] stub bound admissibility ... "; std::cout.flush();
     bool ok3 = SelfTestBound(40, 4242);
     std::cout << (ok3 ? "ok\n" : "FAILED\n");
     ok &= ok3;
+
+    std::cout << "[4/6] coarse moves (block rotate/swap, dominoes) ... "; std::cout.flush();
+    bool ok4 = SelfTestCoarse(pz, std::max(2, trials / 8), 31337);
+    std::cout << (ok4 ? "ok\n" : "FAILED\n");
+    ok &= ok4;
+
+    std::cout << "[5/6] rotation strip DP and upper bound ... "; std::cout.flush();
+    bool ok5 = SelfTestRotation(pz, std::max(3, trials / 4), 5150);
+    std::cout << (ok5 ? "ok\n" : "FAILED\n");
+    ok &= ok5;
+
+    std::cout << "[6/6] sub-board branch and bound vs brute force ... "; std::cout.flush();
+    bool ok6 = SelfTestSubSolve(pz, 2, 777);
+    std::cout << (ok6 ? "ok\n" : "FAILED\n");
+    ok &= ok6;
 
     std::cout << (ok ? "\nall self-tests passed\n" : "\nSELF-TESTS FAILED\n");
     return ok ? 0 : 1;
@@ -462,6 +821,9 @@ int main(int argc, char** argv) {
         if (cmd == "solve") return CmdSolve(args);
         if (cmd == "verify") return CmdVerify(args);
         if (cmd == "bound") return CmdBound(args);
+        if (cmd == "rotbound") return CmdRotBound(args);
+        if (cmd == "bench-subsolve") return CmdBenchSubSolve(args);
+        if (cmd == "polish") return CmdPolish(args);
         if (cmd == "selftest") return CmdSelfTest(args);
         PrintUsage(argv[0]);
         return 1;

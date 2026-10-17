@@ -21,6 +21,28 @@ solver, [Blossom VI](https://github.com/Paul566/blossom-vi)
 
 ---
 
+## The one thing that is genuinely new
+
+```
+./build/eternity-blossom rotbound --pieces data/e2pieces.txt --board results/best_441.txt
+```
+
+```
+current       : 441/480 matched
+  per-edge       465/480   (15 edges can never match at all)
+  star (1 tile + neighbours, halved)  446/480
+  strips of 4 rows     444/480
+  best bound     444/480
+  => rotations alone CANNOT solve this placement: at least 36 edges must stay broken.
+```
+
+A rigorous, polynomial-time (4 ms) ceiling on what a given placement of the
+pieces can achieve by rotating them: partition the 480 internal edges into groups
+that can each be solved **exactly** (strips by a pathwidth DP, seams for free
+because they are vertex-disjoint) and relax only the constraints between groups.
+On a random placement the same computation reports a ceiling of 145/480. Full
+write-up in [experiments/MULTILEVEL.md](experiments/MULTILEVEL.md).
+
 ## Quick start
 
 ```bash
@@ -42,7 +64,10 @@ cloned automatically at configure time (or point CMake at a local checkout with
 | `solve` | search for a high-scoring board (writes a board file) |
 | `verify` | re-score a saved board from scratch |
 | `bound` | compute the stub-matching lower bound at the root |
-| `selftest` | correctness checks for the matching engine, the incremental scoring and the bound |
+| `rotbound` | **upper bound on what rotation alone can reach** for a placement |
+| `bench-subsolve` | compare the branch-and-bound lower bounds on identical problems |
+| `polish` | run the exact operators on an existing board |
+| `selftest` | six correctness checks, each verified against brute force |
 
 ```
 solve options
@@ -105,18 +130,22 @@ perimeter pieces, every non-grey colour with even multiplicity.
 ...
 ```
 
-## The three matching operators
+## The matching operators
 
 | operator | problem | graph | what it buys |
 |---|---|---|---|
 | **swap packet** (§3 of DESIGN) | best set of non-interfering swaps | **non-bipartite**: the complement of the grid graph | a move that is *provably optimal*, not just good |
 | **stub bound** (§4) | admissible lower bound on mismatches of a partial board | **non-bipartite**: rotations destroy N/S vs E/W typing | branch & bound pruning, and a feasibility oracle |
 | **reassignment** (§5) | best permutation of a pool over a set of cells | bipartite (Honest: Hungarian would be faster here) | escapes plateaus no swap can |
+| **block-swap packet** (§5a) | best set of non-interfering *chunk* swaps | **non-bipartite**: complement of the coarse adjacency graph | the swap packet one level up |
+| **rotation strips** (§5c) | optimal rotations for h consecutive rows | bipartite in the stub model; solved exactly by pathwidth DP | 32–64 rotation variables at once |
+| **rotation bound** (§5c) | ceiling on what any rotation can reach | — (edge partition, not matching) | **proves a placement can't be finished** |
 
-The first two are non-bipartite for a structural reason, explained in detail in
-[DESIGN.md](DESIGN.md) — in one line each: *swaps must not interfere, and the
-"must not interfere" graph is the complement of a bipartite graph*; and *pieces
-may rotate freely, so a stub has no direction and no 2-colouring exists*.
+The first two and the block-swap packet are non-bipartite for a structural
+reason, explained in detail in [DESIGN.md](DESIGN.md) — in one line each: *swaps
+must not interfere, and the "must not interfere" graph is the complement of a
+bipartite graph*; and *pieces may rotate freely, so a stub has no direction and
+no 2-colouring exists*.
 
 ## Repository layout
 

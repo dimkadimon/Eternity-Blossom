@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: MIT
 
+#include "e2/coarse.hpp"
+#include "e2/rotation.hpp"
 #include "e2/search.hpp"
+#include "e2/subsolve.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -97,6 +100,16 @@ SearchOutcome SearchOnce(const Puzzle& pz, const SearchParams& params,
 
     const int L = std::max(1, params.lahcLength);
     std::vector<long long> hist(L, cost);
+
+    // --- Coarse dissections.  Square blocks are fixed; domino tilings are
+    //     sampled once and then rotated through, so that each sweep explores a
+    //     different set of 128 large moves on the same board state.
+    std::vector<BlockSet> blockSets;
+    for (int side : params.coarseSides) blockSets.push_back(MakeSquareBlocks(pz, side));
+    for (int i = 0; i < params.coarseDominoes; ++i)
+        blockSets.push_back(MakeDominoTiling(pz, params.seed * 7919u + 13u * (unsigned)i + 1u,
+                                            params.coarseDominoFlips));
+    long long coarseTick = 0;
 
     // --- Conflict frontier and colour index, rebuilt periodically.
     // `conflicts`  : cells that touch at least one violated slot.
@@ -354,6 +367,117 @@ SearchOutcome SearchOnce(const Puzzle& pz, const SearchParams& params,
             }
         }
 
+        // ---- Coarse rotate sweep: rigid block rotations, then (less often) the
+        // Blossom packet of non-interacting block swaps on the coarse board.
+        if (params.useCoarseRotate && params.coarseRotateEvery > 0 && !blockSets.empty() &&
+            (iters % params.coarseRotateEvery) < 4096) {
+            const BlockSet& bs = blockSets[(size_t)(coarseTick % (long long)blockSets.size())];
+            ++coarseTick;
+            const long long c0 = b.cost;
+            CoarseRotateResult cr = CoarseRotateSweep(b, bs);
+            ++st.coarseRotateSweeps;
+            st.coarseRotates += cr.applied;
+            if (b.cost != c0) {
+                st.coarseRotateGain += c0 - b.cost;
+                cost = b.cost;
+                rebuildIndex();
+                std::fill(hist.begin(), hist.end(), cost);
+                if (cost < best) { best = cost; bestPc = b.pc; bestRt = b.rt; sinceImprove = 0; }
+                if (best == 0) break;
+            }
+        }
+
+        if (params.useCoarseSwap && params.coarseSwapEvery > 0 && !blockSets.empty() &&
+            (iters % params.coarseSwapEvery) < 4096) {
+            const BlockSet& bs = blockSets[(size_t)(coarseTick % (long long)blockSets.size())];
+            ++coarseTick;
+            CoarseSwapResult cs = CoarseSwapPass(b, bs, params.coarseSwap, &st.matching);
+            ++st.coarseSwapPasses;
+            st.coarseSwapPredicted += cs.predictedGain;
+            st.coarseSwapActual += cs.actualGain;
+            st.coarseSwapPairs += cs.pairsApplied;
+            if (cs.actualGain > 0) {
+                ++st.coarseSwapImproved;
+                cost = b.cost;
+                rebuildIndex();
+                std::fill(hist.begin(), hist.end(), cost);
+                if (cost < best) { best = cost; bestPc = b.pc; bestRt = b.rt; sinceImprove = 0; }
+                if (best == 0) break;
+            }
+        }
+
+        // ---- Exact rotation re-optimisation of whole strips (pathwidth DP).
+        if (params.useRotStrip && params.rotStripEvery > 0 && (iters % params.rotStripEvery) < 4096) {
+            const long long c0 = b.cost;
+            StripSweepResult sr = StripRotateSweep(b, params.rotStripK, false);
+            ++st.rotStripSweeps;
+            if (params.rotStripColumns) {
+                StripSweepResult sc = StripRotateSweep(b, params.rotStripK, true);
+                sr.applied += sc.applied;
+                sr.gain += sc.gain;
+                sr.strips += sc.strips;
+            }
+            st.rotStripApplied += sr.applied;
+            if (b.cost != c0) {
+                st.rotStripGain += c0 - b.cost;
+                cost = b.cost;
+                rebuildIndex();
+                std::fill(hist.begin(), hist.end(), cost);
+                if (cost < best) { best = cost; bestPc = b.pc; bestRt = b.rt; sinceImprove = 0; }
+                if (best == 0) break;
+            }
+        }
+
+        // ---- Exact sub-board branch and bound.
+        if (params.useSubSolve && params.subSolveEvery > 0 && (iters % params.subSolveEvery) < 4096) {
+            const int hh = std::max(1, std::min(params.subSolveH, pz.H));
+            const int ww = std::max(1, std::min(params.subSolveW, pz.W));
+            const int r0 = (int)(rng() % (unsigned)(pz.H - hh + 1));
+            const int c0 = (int)(rng() % (unsigned)(pz.W - ww + 1));
+            const std::vector<int> cells = RectRegion(pz, r0, c0, hh, ww);
+            std::vector<int> pool(cells.size());
+            for (size_t i = 0; i < cells.size(); ++i) pool[i] = b.pc[cells[i]];
+            SubSolveResult ss = SubSolveRegion(b, cells, pool, params.subSolve, &st.matching);
+            ++st.subSolveRuns;
+            st.subSolveNodes += ss.nodes;
+            st.subSolveStubCalls += ss.stubCalls;
+            st.subSolveStubPrunes += ss.stubPrunes;
+            if (ss.exact) ++st.subSolveExact;
+            if (ss.improved) {
+                ++st.subSolveImproved;
+                cost = b.cost;
+                if (cost < best) { best = cost; bestPc = b.pc; bestRt = b.rt; sinceImprove = 0; }
+                std::fill(hist.begin(), hist.end(), cost);
+                rebuildIndex();
+                if (best == 0) break;
+            }
+        }
+
+        // ---- Rotation-only upper bound: an oracle, not a move.  If the best
+        // board reachable from THIS placement by rotating alone is no better
+        // than the best board we already have, the placement is finished with --
+        // perturb it immediately instead of grinding on its rotations.
+        if (params.useRotBound && params.rotBoundEvery > 0 && (iters % params.rotBoundEvery) < 4096) {
+            RotationBoundResult rb = RotationUpperBound(b, params.rotBoundK, false);
+            ++st.rotBoundCalls;
+            if (rb.matchedUB < st.rotBoundBest) st.rotBoundBest = rb.matchedUB;
+            // cost = 2*mismatches + wBorderSlot*badBorder >= 2*mismatchLB
+            if (2 * rb.mismatchLB >= best) {
+                ++st.rotBoundTriggers;
+                for (int k = 0; k < params.perturbSwaps; ++k) {
+                    const int u = (int)(rng() % pz.ncells);
+                    int v = (int)(rng() % pz.ncells);
+                    if (u == v) continue;
+                    b.applySwap(u, v, b.rt[v], b.rt[u]);
+                }
+                cost = b.cost;
+                std::fill(hist.begin(), hist.end(), cost);
+                ++st.restarts;
+                sinceImprove = 0;
+                rebuildIndex();
+            }
+        }
+
         // Exact re-optimisation of a small region.
         if (params.useRegionLNS && params.regionEvery > 0 && (iters % params.regionEvery) < 4096) {
             std::vector<int> cells;
@@ -393,6 +517,21 @@ SearchOutcome SearchOnce(const Puzzle& pz, const SearchParams& params,
                 int v = (int)(rng() % pz.ncells);
                 if (u == v) continue;
                 b.applySwap(u, v, b.rt[v], b.rt[u]);
+            }
+            // Chunk-level perturbation: random rigid block rotations (and
+            // domino flips, if any dissections are loaded).  Each one keeps
+            // every internal edge of its block intact and only re-exposes the
+            // block's boundary, so it is a much larger step than a random swap
+            // yet destroys far less structure.
+            if (params.coarsePerturb > 0 && !blockSets.empty()) {
+                for (int k = 0; k < params.coarsePerturb; ++k) {
+                    const BlockSet& bs = blockSets[rng() % blockSets.size()];
+                    const int bi = (int)(rng() % bs.blocks.size());
+                    const int nrot = bs.blocks[bi].nrot;
+                    if (nrot < 2) continue;
+                    const int q = 1 + (int)(rng() % (unsigned)(nrot - 1));
+                    ApplyBlockRotate(b, bs, bi, q);
+                }
             }
             cost = b.cost;
             std::fill(hist.begin(), hist.end(), cost);
@@ -450,6 +589,26 @@ SearchOutcome SearchParallel(const Puzzle& pz, const SearchParams& params, int t
         agg.regionNodes += s.regionNodes;
         agg.regionBoundCalls += s.regionBoundCalls;
         agg.regionBoundPrunes += s.regionBoundPrunes;
+        agg.coarseRotateSweeps += s.coarseRotateSweeps;
+        agg.coarseRotates += s.coarseRotates;
+        agg.coarseRotateGain += s.coarseRotateGain;
+        agg.coarseSwapPasses += s.coarseSwapPasses;
+        agg.coarseSwapImproved += s.coarseSwapImproved;
+        agg.coarseSwapPredicted += s.coarseSwapPredicted;
+        agg.coarseSwapActual += s.coarseSwapActual;
+        agg.coarseSwapPairs += s.coarseSwapPairs;
+        agg.rotStripSweeps += s.rotStripSweeps;
+        agg.rotStripApplied += s.rotStripApplied;
+        agg.rotStripGain += s.rotStripGain;
+        agg.rotBoundCalls += s.rotBoundCalls;
+        agg.rotBoundTriggers += s.rotBoundTriggers;
+        agg.rotBoundBest = std::min(agg.rotBoundBest, s.rotBoundBest);
+        agg.subSolveRuns += s.subSolveRuns;
+        agg.subSolveImproved += s.subSolveImproved;
+        agg.subSolveExact += s.subSolveExact;
+        agg.subSolveNodes += s.subSolveNodes;
+        agg.subSolveStubCalls += s.subSolveStubCalls;
+        agg.subSolveStubPrunes += s.subSolveStubPrunes;
         agg.seconds += s.seconds;
         agg.matching.calls += s.matching.calls;
         agg.matching.totalVertices += s.matching.totalVertices;

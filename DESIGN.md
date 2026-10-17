@@ -249,25 +249,49 @@ This is a nice illustration of the general principle: it is precisely the
 advance, the graph would split into N/S and E/W classes and a min-cost flow
 solver would do.
 
-### 4.3 How much is it worth?
+### 4.3 How much is it worth?  (measured, and it is not much)
 
-Honestly: not much, yet. At the root it is 0 (§2). Inside a branch & bound over
-a small region it does fire, but on the 16×16 instance the pruning it buys does
-not repay its cost — Blossom VI takes a few hundred microseconds per call, and a
-branch & bound that calls it at every node is orders of magnitude slower than
-the local search it is trying to help. `RegionReoptimize` is in the repository
-with the bound wired in and instrumented (`--region`), the numbers are reported
-in the experiments file, and the conclusion there is a negative one. We keep it
-because the bound is *correct* (it is exercised by `selftest`, which checks
-admissibility against brute force on random 2×2 instances) and because on
-smaller instances — 4×4, 5×5 — it is a different story.
+The root bound is 0 — see section 8. That rules it out as a whole-board pruning
+device, so the question becomes whether it earns its keep *deep in a branch*,
+which is where a bound of this kind is supposed to pay. It is now used exactly
+there: inside the sub-board branch and bound of section 5b.
 
-Where it should pay: an exact solver that fixes most of the board and then has
-to decide whether the last two or three rows can be completed. That is exactly
-the regime where the relaxation is tight, because the demand vertices dominate
-the stub vertices.
+`eternity-blossom bench-subsolve` solves the same regions in the same board
+state under each combination of bounds. 300 random 3x3 regions (9 cells):
 
----
+| bounds                        | nodes/solve | seconds |
+|-------------------------------|-------------|---------|
+| all three                     | 494         | 0.44    |
+| − stub bound (Blossom VI)     | 662         | **0.14**|
+| − assignment bound (Hungarian)| 2,549       | 7.13    |
+| − edge bound                  | 494         | 0.53    |
+| stub bound only               | 2,571       | 11.84   |
+| no bounds                     | 11,955      | 0.58    |
+
+So: the bound is **admissible** (every configuration returns the identical
+optimum in every region — it never prunes the answer away) and it **prunes**
+(44% of calls cut), but it **loses on time**. A Blossom VI call on these small
+instances is ~2 us and a branch-and-bound node is ~0.16 us, so a call must save
+~12 nodes to pay for itself.
+
+And where you call it is nearly the whole story — a prune at depth `d` kills the
+entire subtree below, so calling it near the leaves wastes it. Sweeping the depth
+(3x3 regions, `rem` = cells still free):
+
+| stub bound called when | nodes/solve | seconds |
+|------------------------|-------------|---------|
+| 0 ≤ rem ≤ 9 (everywhere) | 494 | 0.45 |
+| 6 ≤ rem ≤ 9              | 569 | 0.29 |
+| **8 ≤ rem ≤ 9 (top 2 levels)** | 651 | **0.18** |
+| not called at all        | 662 | 0.19   |
+
+Everywhere: a 2.3x net loss. Only where a prune still kills a large subtree: a
+6% net win. `stubAutoShallow` makes that the default.
+
+The reason it is weak is not that the relaxation is wrong, it is that it is
+**loose**: it lets a piece's four sides be chosen independently, when in fact
+they must all come from one rotation. Strengthening it means putting the rotation
+back in, which is the first item of the roadmap.
 
 ## 5. Operator 3: optimal reassignment (bipartite — but still matching)
 
@@ -300,6 +324,97 @@ same Blossom VI engine here so the project has exactly one matching dependency;
 Blossom VI handles bipartite graphs as the no-odd-cycle special case.
 
 ---
+
+## 5a. Operator 4: coarse-grained ("chunk") moves
+
+Local search over single-cell swaps stalls — 700M iterations without leaving
+425/480, measured. The classical escape is to move chunks. Dissect the board
+into rigid super-tiles and the same operators apply one level up:
+
+* **Square blocks** (2x2 → an 8x8 board of 64 super-tiles, 4x4 → 4x4, 8x8 →
+  2x2). A block's internal structure is a symmetry of the block, so rotating it
+  carries every internal adjacency onto another one *bringing the same pair of
+  colours with it*. Individual internal edges move (top → right → bottom → left
+  for a quarter turn) but **how many of them match does not**. A block swap
+  preserves both blocks' internals outright. Either way only the boundary edges
+  can change the objective, so the delta costs 4s slot lookups and is exact.
+* **Dominoes (1x2).** There is no canonical dissection — there are astronomically
+  many — and each one induces a **different move set** on the same board state,
+  which is a diversification device rather than an optimisation one. New
+  dissections are sampled by running the standard connected 2x2-flip Markov chain
+  from the all-horizontal tiling.
+
+**The matching part is the same primitive one level up.** A packet of block swaps
+is only additive if no two blocks involved touch, so the legal pairs are the
+non-adjacent pairs — the complement of the coarse adjacency graph, which on the
+8x8 block board contains triangles and is therefore **non-bipartite**. Same
+Blossom VI call, coarser graph.
+
+Measured: neutral to harmful on score (see `experiments/MULTILEVEL.md`). The
+operators are exact and they fire, but the search's own move set already finds
+what they find.
+
+## 5b. Operator 5: exact sub-board branch and bound
+
+Rather than perturbing a region and hoping, **re-solve it to optimality**: choose
+the assignment of pieces to cells *and* the rotations that minimises violated
+slots inside the region and on its boundary, with the surroundings frozen so the
+boundary edges are unary costs.
+
+Three lower bounds, in the same units as `cost/2` (one unit per mismatched
+internal edge, `wBorderRel` per bad border slot):
+
+1. **Edge bound** — a histogram of the colours left in the pool; any undecided
+   slot whose required colour is in no remaining piece is certainly violated.
+   O(|R|) per node, cheap enough to run everywhere.
+2. **Assignment bound** — `v(c,p)` = the fewest of cell `c`'s already-decided
+   slots that piece `p` can violate; the remaining cost is at least the minimum
+   over injective assignments, a rectangular assignment problem (dummy rows of
+   cost zero absorb surplus pool pieces) solved by an O(m³) Hungarian.
+   **Bipartite** — no blossoms needed.
+3. **Stub bound** — section 4. Non-bipartite, and the only one of the three that
+   sees that a piece with one red edge can only serve one red demand.
+
+Proved optimal: 2x2, 2x3 and 3x3 at 100%, 3x4 at 97.6%. 4x4 is out of reach.
+Score impact: neutral.
+
+## 5c. Operator 6: rotation-only optimisation, and an upper bound
+
+Freeze the placement; let only rotations vary. That is a pairwise CSP on the
+grid — 256 variables of domain 4 — NP-hard in general (the grid is not a tree),
+but with two exact handles:
+
+**(a) Exact strips.** `h` consecutive rows have pathwidth `h`, so they are solved
+**exactly** by a DP sweeping the columns with the 4^h rotations of the current
+column as state (h=2: 16 states, h=3: 64, h=4: 256). One pass re-solves 32–64
+rotation variables jointly and optimally, and never worsens the board because the
+current rotations are one of the DP's feasible states.
+
+**(b) An upper bound — the most useful thing in this section.** Partition the 480
+internal edges into groups, solve each group exactly, sum. Relaxing the
+constraints *between* groups can only help, so the sum is an upper bound on what
+**any** rotation assignment can reach. With strips of height `h`:
+
+* every strip contributes the exact optimum over **its own** internal edges (the
+  DP, told to ignore edges leaving the strip), and
+* the seams between consecutive strips contribute their exact optimum **for
+  free** — seam edges are vertex-disjoint, so they do not interact and the optimum
+  is the sum of the per-edge optima.
+
+Those two families partition all 480 edges, so
+
+    matched  <=  480 - ( sum of strip minima + sum of seam minima )
+
+which is rigorous, takes 4 ms at h=4, and turns "this placement scores 441" into
+"**this placement can never score better than 444**". That is a placement filter:
+if the ceiling is at or below the best board already found, stop polishing
+rotations and go and move some pieces (`--rot-bound`).
+
+A weaker bound in the same spirit — optimise each cell together with its four
+neighbours, ignore the rest — is also implemented. Note that it counts every
+internal edge **twice**, once from each endpoint, so its raw sum (892 on the 441
+board) must be halved before being compared with 480; 892 looks like no
+information at all, 446 is a proof.
 
 ## 6. The search around the operators
 
