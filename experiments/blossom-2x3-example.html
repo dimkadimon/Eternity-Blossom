@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The non-bipartite swap move, worked on a 2&#215;3 window</title>
+<style>
+:root{--ink:#1d2733;--mut:#5b6b7c;--line:#dde3ea;--acc:#0b6bcb;--bad:#d62728;--good:#1b9e4b;
+--bg:#ffffff;--soft:#f6f8fa;--warn:#b26a00}
+*{box-sizing:border-box}
+body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+ font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+ -webkit-font-smoothing:antialiased}
+.wrap{max-width:940px;margin:0 auto;padding:44px 26px 90px}
+h1{font-size:31px;line-height:1.25;margin:0 0 6px;letter-spacing:-.4px}
+.sub{color:var(--mut);font-size:17px;margin:0 0 30px}
+h2{font-size:22px;margin:46px 0 10px;padding-top:22px;border-top:1px solid var(--line);
+ letter-spacing:-.2px}
+h3{font-size:17px;margin:26px 0 6px}
+p{margin:11px 0}
+ul,ol{margin:11px 0;padding-left:24px}
+li{margin:6px 0}
+code{background:var(--soft);padding:2px 6px;border-radius:4px;
+ font:13.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+pre{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:14px 16px;
+ overflow-x:auto;font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+table{border-collapse:collapse;margin:14px 0;font-size:14.5px;width:100%}
+th,td{border:1px solid var(--line);padding:7px 11px;text-align:left}
+th{background:var(--soft);font-weight:650}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.box{background:var(--soft);border:1px solid var(--line);border-left:4px solid var(--acc);
+ border-radius:0 8px 8px 0;padding:14px 18px;margin:18px 0}
+.box.key{border-left-color:var(--good);background:#f2fbf5}
+.box.warn{border-left-color:var(--warn);background:#fffaf0}
+.box.bad{border-left-color:var(--bad);background:#fdf3f3}
+.box p:first-child{margin-top:0}.box p:last-child{margin-bottom:0}
+.fig{margin:20px 0;text-align:center}
+.fig svg{display:block;margin:0 auto}
+.cap{font-size:13.5px;color:var(--mut);margin-top:9px;text-align:center}
+.two{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start}
+.two>div{flex:1 1 300px;min-width:280px}
+.k{font-weight:700}
+.tag{display:inline-block;background:var(--acc);color:#fff;border-radius:4px;
+ padding:1px 7px;font-size:12.5px;font-weight:650;vertical-align:middle}
+.sw{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-2px;
+ border:1px solid #222}
+.legend{font-size:13.5px;color:var(--mut)}
+hr{border:0;border-top:1px solid var(--line);margin:34px 0}
+</style></head><body><div class="wrap">
+
+<h1>Why tile swapping needs Blossom: a complete 2&#215;3 worked example</h1>
+<p class="sub">Every number on this page was produced by the solver itself on a real board &mdash;
+nothing here is illustrative.</p>
+
+<div class="box key"><p><span class="tag">The one-sentence version</span></p>
+<p>Improving the board by <b>swapping pairs of tiles</b> is a <b>maximum-weight matching</b>
+problem. The graph you match on is the <b>complement of the grid</b> &mdash; two tiles may be
+swapped only if they are <i>not</i> neighbours. On a 2&#215;3 window that complement graph
+already contains two triangles, so it is <b>not bipartite</b>, and the Hungarian algorithm
+(which requires a bipartite graph) <b>cannot be used at all</b>. Blossom can, because matching
+in a <i>general</i> graph is exactly what it does.</p></div>
+
+<h2>1. The move: swap two tiles, re-spin them independently</h2>
+<p>Take two cells <b>u</b> and <b>v</b>. Exchange the pieces in them, and choose a fresh rotation
+for each piece independently. Surrounding tiles never move.</p>
+<p>Each tile shows its four edge colours as wedges (top = North, right = East, bottom = South,
+left = West), plus the piece id and rotation. An internal edge is
+<span class="k" style="color:var(--good)">green</span> when the two facing colours agree and
+<span class="k" style="color:var(--bad)">red</span> when they clash. The objective counts
+<b>2</b> for every clashing internal edge (each such edge is seen from both endpoints) and
+<b>8</b> for every non-grey border edge.</p>
+
+<div class="fig"><svg viewBox="-32 -32 462 344" width="100%" style="max-width:502px" role="img" aria-label="original 2x3 window"><rect x="-26" y="-26" width="406" height="288" rx="8" fill="#eef1f5" stroke="#c9d2dd" stroke-width="2"/><line x1="59.0" y1="59.0" x2="59.0" y2="177.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="59.0" y1="59.0" x2="177.0" y2="59.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="59.0" y1="177.0" x2="59.0" y2="295.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="59.0" y1="177.0" x2="177.0" y2="177.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="59.0" y1="295.0" x2="177.0" y2="295.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="177.0" y1="59.0" x2="177.0" y2="177.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="177.0" y1="177.0" x2="177.0" y2="295.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><g transform="translate(0,0)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#808080" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">20</text><polygon points="118,0 118,118 59.0,59.0" fill="#fffac8" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">14</text><polygon points="118,118 0,118 59.0,59.0" fill="#000075" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">19</text><polygon points="0,118 0,0 59.0,59.0" fill="#fabebe" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">10</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">a</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p122 r3</text></g><g transform="translate(0,118)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#f032e6" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">8</text><polygon points="118,0 118,118 59.0,59.0" fill="#fabebe" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">10</text><polygon points="118,118 0,118 59.0,59.0" fill="#aaffc3" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">16</text><polygon points="0,118 0,0 59.0,59.0" fill="#808080" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">20</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">b</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p129 r1</text></g><g transform="translate(0,236)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#2f4f4f" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">21</text><polygon points="118,0 118,118 59.0,59.0" fill="#f032e6" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">8</text><polygon points="118,118 0,118 59.0,59.0" fill="#fffac8" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">14</text><polygon points="0,118 0,0 59.0,59.0" fill="#aaffc3" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">16</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">c</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p200 r2</text></g><g transform="translate(118,0)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#800000" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">15</text><polygon points="118,0 118,118 59.0,59.0" fill="#911eb4" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">6</text><polygon points="118,118 0,118 59.0,59.0" fill="#f032e6" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">8</text><polygon points="0,118 0,0 59.0,59.0" fill="#f032e6" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">8</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">d</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p178 r1</text></g><g transform="translate(118,118)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#911eb4" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">6</text><polygon points="118,0 118,118 59.0,59.0" fill="#ffd8b1" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">18</text><polygon points="118,118 0,118 59.0,59.0" fill="#911eb4" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">6</text><polygon points="0,118 0,0 59.0,59.0" fill="#800000" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">15</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">e</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p141 r1</text></g><g transform="translate(118,236)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#aaffc3" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">16</text><polygon points="118,0 118,118 59.0,59.0" fill="#800000" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">15</text><polygon points="118,118 0,118 59.0,59.0" fill="#ffe119" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">3</text><polygon points="0,118 0,0 59.0,59.0" fill="#46f0f0" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">7</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">f</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p210 r2</text></g></svg>
+<div class="cap"><b>Figure 1 &mdash; the original window.</b> A 2&#215;3 block taken from a real
+16&#215;16 board, sitting in its frozen surround (pale band). All 7 internal edges
+clash; 0/7 are matched.</div></div>
+
+<h2>2. Which pairs are legal? Not the neighbours</h2>
+<p>The change in objective caused by swapping <b>u</b> and <b>v</b> is a sum of terms, one per
+side of <b>u</b> and one per side of <b>v</b>. Each term compares the new colour on that side
+against the colour it must match &mdash; and that required colour comes from the tile
+<i>on the other side</i>.</p>
+<div class="box bad"><p><b>That is exactly why neighbours are forbidden.</b> If <b>u</b> and
+<b>v</b> share an edge, then the colour <b>u</b> must match on that side <i>is</i> the content
+of <b>v</b> &mdash; which is itself moving. The term is no longer a constant, the two cells stop
+being independent, and the swap's value can no longer be written down in advance.</p></div>
+<p>So the legal pairs are precisely the pairs of cells that are <b>not</b> neighbours.</p>
+
+<div class="two">
+<div><div class="fig"><svg viewBox="0 0 520 330" width="100%" style="max-width:520px" role="img"><line x1="90" y1="70" x2="90" y2="200" stroke="#33475b" stroke-width="4"/><line x1="90" y1="70" x2="240" y2="70" stroke="#33475b" stroke-width="4"/><line x1="90" y1="200" x2="90" y2="330" stroke="#33475b" stroke-width="4"/><line x1="90" y1="200" x2="240" y2="200" stroke="#33475b" stroke-width="4"/><line x1="90" y1="330" x2="240" y2="330" stroke="#33475b" stroke-width="4"/><line x1="240" y1="70" x2="240" y2="200" stroke="#33475b" stroke-width="4"/><line x1="240" y1="200" x2="240" y2="330" stroke="#33475b" stroke-width="4"/><circle cx="90" cy="70" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="90" y="71" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">a</text><circle cx="90" cy="200" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="90" y="201" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">b</text><circle cx="90" cy="330" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="90" y="331" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">c</text><circle cx="240" cy="70" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="240" y="71" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">d</text><circle cx="240" cy="200" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="240" y="201" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">e</text><circle cx="240" cy="330" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="240" y="331" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">f</text></svg>
+<div class="cap"><b>Figure 2a &mdash; the grid graph.</b> 7 edges: the pairs that are
+forbidden.</div></div></div>
+<div><div class="fig"><svg viewBox="0 0 520 330" width="100%" style="max-width:520px" role="img"><path d="M90,70 Q56.0,200.0 90,330" fill="none" stroke="#8896a6" stroke-width="2.5"/><text x="56.0" y="194.0" text-anchor="middle" font-size="14" font-weight="700" fill="#33475b">6</text><path d="M90,70 Q142.73236169379337,160.6934288148538 240,200" fill="none" stroke="#8896a6" stroke-width="2.5"/><text x="142.73236169379337" y="154.6934288148538" text-anchor="middle" font-size="14" font-weight="700" fill="#33475b">2</text><path d="M90,70 Q135.54969007434758,216.99056341864562 240,330" fill="none" stroke="#8896a6" stroke-width="2.5"/><text x="135.54969007434758" y="210.99056341864562" text-anchor="middle" font-size="14" font-weight="700" fill="#33475b">4</text><path d="M90,200 Q187.26763830620663,160.6934288148538 240,70" fill="none" stroke="#8896a6" stroke-width="2.5"/><text x="187.26763830620663" y="154.6934288148538" text-anchor="middle" font-size="14" font-weight="700" fill="#33475b">2</text><path d="M90,200 Q142.73236169379337,290.6934288148538 240,330" fill="none" stroke="#8896a6" stroke-width="2.5"/><text x="142.73236169379337" y="284.6934288148538" text-anchor="middle" font-size="14" font-weight="700" fill="#33475b">4</text><path d="M90,330 Q194.45030992565242,216.99056341864562 240,70" fill="none" stroke="#8896a6" stroke-width="2.5"/><text x="194.45030992565242" y="210.99056341864562" text-anchor="middle" font-size="14" font-weight="700" fill="#33475b">2</text><path d="M90,330 Q187.26763830620663,290.6934288148538 240,200" fill="none" stroke="#8896a6" stroke-width="2.5"/><text x="187.26763830620663" y="284.6934288148538" text-anchor="middle" font-size="14" font-weight="700" fill="#33475b">2</text><path d="M240,70 Q206.0,200.0 240,330" fill="none" stroke="#8896a6" stroke-width="2.5"/><text x="206.0" y="194.0" text-anchor="middle" font-size="14" font-weight="700" fill="#33475b">2</text><circle cx="90" cy="70" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="90" y="71" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">a</text><circle cx="90" cy="200" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="90" y="201" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">b</text><circle cx="90" cy="330" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="90" y="331" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">c</text><circle cx="240" cy="70" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="240" y="71" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">d</text><circle cx="240" cy="200" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="240" y="201" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">e</text><circle cx="240" cy="330" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="240" y="331" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">f</text></svg>
+<div class="cap"><b>Figure 2b &mdash; the swap graph.</b> 8 edges: the pairs that are
+allowed, each labelled with its gain. It is the <b>complement</b> of Figure 2a.</div></div></div>
+</div>
+
+<p>Six cells have 15 pairs. 7 are grid edges, so
+<b>15 &minus; 7 = 8</b> survive into the swap graph. Every one of them
+carries a genuine gain, computed by trying all 16 rotation combinations and keeping the best:</p>
+
+<table><thead><tr><th class="num">#</th><th>pair</th><th class="num">gain</th><th>note</th></tr></thead>
+<tbody><tr><td class="num">1</td><td><b>a&#8211;c</b></td><td class="num">6</td><td>best single swap in the whole window</td></tr><tr><td class="num">2</td><td><b>a&#8211;f</b></td><td class="num">4</td><td>corner to far corner</td></tr><tr><td class="num">3</td><td><b>b&#8211;f</b></td><td class="num">4</td><td>top-middle to bottom-right</td></tr><tr><td class="num">4</td><td><b>a&#8211;e</b></td><td class="num">2</td><td>diagonal</td></tr><tr><td class="num">5</td><td><b>b&#8211;d</b></td><td class="num">2</td><td>diagonal</td></tr><tr><td class="num">6</td><td><b>c&#8211;d</b></td><td class="num">2</td><td>diagonal</td></tr><tr><td class="num">7</td><td><b>c&#8211;e</b></td><td class="num">2</td><td>diagonal</td></tr><tr><td class="num">8</td><td><b>d&#8211;f</b></td><td class="num">2</td><td>bottom row, distance two</td></tr></tbody></table>
+<p class="legend">Gain&nbsp;=&nbsp;the reduction in objective; a negative delta is a positive
+gain. Pairs with zero gain would simply be omitted as edges.</p>
+
+<h2>3. The swap graph is not bipartite &mdash; and that is the whole point</h2>
+<p>Take the three cells <b>a</b>, <b>c</b> and <b>e</b>:</p>
+<ul>
+<li><b>a</b> and <b>c</b> are in the same row but two columns apart &rarr; not neighbours &rarr;
+ edge <b>a&#8211;c</b> exists.</li>
+<li><b>c</b> and <b>e</b> are diagonal &rarr; not neighbours &rarr; edge <b>c&#8211;e</b>
+ exists.</li>
+<li><b>a</b> and <b>e</b> are diagonal &rarr; not neighbours &rarr; edge <b>a&#8211;e</b>
+ exists.</li>
+</ul>
+<p>All three edges are present, so <b>&#123;a, c, e&#125;</b> is a <b>triangle</b> &mdash; an odd
+cycle. The solver confirms there are exactly two: <b>&#123;a, c, e&#125;</b> and
+<b>&#123;b, d, f&#125;</b>.</p>
+
+<div class="fig"><svg viewBox="0 0 520 330" width="100%" style="max-width:520px" role="img"><path d="M90,70 Q56.0,200.0 90,330" fill="none" stroke="#d62728" stroke-width="5"/><text x="56.0" y="194.0" text-anchor="middle" font-size="14" font-weight="700" fill="#d62728">6</text><path d="M90,70 Q142.73236169379337,160.6934288148538 240,200" fill="none" stroke="#d62728" stroke-width="5"/><text x="142.73236169379337" y="154.6934288148538" text-anchor="middle" font-size="14" font-weight="700" fill="#d62728">2</text><path d="M90,70 Q135.54969007434758,216.99056341864562 240,330" fill="none" stroke="#8896a6" stroke-width="2.5"/><text x="135.54969007434758" y="210.99056341864562" text-anchor="middle" font-size="14" font-weight="700" fill="#33475b">4</text><path d="M90,200 Q187.26763830620663,160.6934288148538 240,70" fill="none" stroke="#8896a6" stroke-width="2.5"/><text x="187.26763830620663" y="154.6934288148538" text-anchor="middle" font-size="14" font-weight="700" fill="#33475b">2</text><path d="M90,200 Q142.73236169379337,290.6934288148538 240,330" fill="none" stroke="#8896a6" stroke-width="2.5"/><text x="142.73236169379337" y="284.6934288148538" text-anchor="middle" font-size="14" font-weight="700" fill="#33475b">4</text><path d="M90,330 Q194.45030992565242,216.99056341864562 240,70" fill="none" stroke="#8896a6" stroke-width="2.5"/><text x="194.45030992565242" y="210.99056341864562" text-anchor="middle" font-size="14" font-weight="700" fill="#33475b">2</text><path d="M90,330 Q187.26763830620663,290.6934288148538 240,200" fill="none" stroke="#d62728" stroke-width="5"/><text x="187.26763830620663" y="284.6934288148538" text-anchor="middle" font-size="14" font-weight="700" fill="#d62728">2</text><path d="M240,70 Q206.0,200.0 240,330" fill="none" stroke="#8896a6" stroke-width="2.5"/><text x="206.0" y="194.0" text-anchor="middle" font-size="14" font-weight="700" fill="#33475b">2</text><circle cx="90" cy="70" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="90" y="71" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">a</text><circle cx="90" cy="200" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="90" y="201" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">b</text><circle cx="90" cy="330" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="90" y="331" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">c</text><circle cx="240" cy="70" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="240" y="71" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">d</text><circle cx="240" cy="200" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="240" y="201" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">e</text><circle cx="240" cy="330" r="25" fill="#fff" stroke="#33475b" stroke-width="3"/><text x="240" y="331" text-anchor="middle" dominant-baseline="central" font-size="19" font-weight="700" fill="#33475b">f</text></svg>
+<div class="cap"><b>Figure 3 &mdash; the triangle &#123;a, c, e&#125;</b> (red). Its mirror
+&#123;b, d, f&#125; is the other one.</div></div>
+
+<div class="box warn"><p><b>A graph is bipartite if and only if it has no odd cycle.</b>
+A triangle is an odd cycle of length 3, so the swap graph is not bipartite, and the solver's
+2-colouring attempt fails, as it must.</p>
+<p>Worth noting: <b>2&#215;3 is the smallest grid where this happens.</b> A 1&#215;4 grid
+complement is a 3-edge path and a 2&#215;2 complement is two disjoint edges &mdash; both
+bipartite. At 2&#215;3 the triangles appear.</p></div>
+
+<h2>4. Why Hungarian cannot be used</h2>
+<p>The Hungarian algorithm solves <i>assignment</i>: put objects on one side, slots on the other,
+and match across. It needs the two sides to be genuinely different sets, with every edge crossing
+between them. Our problem has one set of six cells and edges drawn <i>between members of that
+same set</i>. There is no way to split &#123;a, c, e&#125; into two sides when each pair among
+them is an edge &mdash; try it and you are forced to put two adjacent vertices on the same side.</p>
+<p>This is not a technicality that can be worked around. It is the difference between two
+different polytopes:</p>
+<ul>
+<li><b>Bipartite matching</b> is described completely by the degree constraints
+ &Sigma;<sub>e&nbsp;&isin;&nbsp;&delta;(v)</sub> x<sub>e</sub> = 1. That is why Hungarian, and
+ the linear program behind it, is exact there.</li>
+<li><b>General matching</b> needs <b>extra</b> constraints that bipartite matching does not have:
+ Edmonds' <b>odd-set (blossom) inequalities</b>
+ &Sigma;<sub>e&nbsp;&isin;&nbsp;E[S]</sub> x<sub>e</sub> &le; (&#124;S&#124;&minus;1)/2 for every
+ odd set S.</li>
+</ul>
+<p>Here is the concrete damage, run through the actual solver. Give the triangle
+&#123;a, c, e&#125; three edges of weight 1 each and everything else weight 0:</p>
+<pre>triangle &#123;a,c,e&#125; all weights 1: max weight matching = 1
+  (LP without the odd-set inequality would give 1.5;
+   the blossom constraint x(E[S]) &lt;= 1 is exactly what cuts that off)</pre>
+<p>The straight LP relaxation happily sets all three triangle edges to &frac12;, reaching
+<b>1.5</b> &mdash; an answer no real matching can achieve, because a matching can take at most
+<b>1</b> edge out of any triangle. The missing constraint is
+x<sub>ac</sub>+x<sub>ce</sub>+x<sub>ae</sub> &le; 1, i.e. Edmonds' odd-set inequality with
+S&nbsp;=&nbsp;&#123;a, c, e&#125;. <b>Shrinking such odd sets into a single super-vertex is
+literally what "blossom" names</b>, and it is the machinery Blossom VI brings and Hungarian does
+not have.</p>
+
+<h2>5. Running the maximum-weight matching</h2>
+<p>We ask for the maximum-weight matching of the 8-edge graph in Figure 2b. Blossom VI returns:</p>
+<pre>--- maximum weight matching (Blossom) ---
+total weight 10, 2 pairs:
+  a-c
+  b-f</pre>
+<p>Because this graph has only six vertices, we can also enumerate <b>all</b> possible matchings
+by hand and check the answer. There are <b>25</b> of them:</p>
+<pre>brute-force MAX WEIGHT MATCHING = 10 : a-c b-f
+Blossom says                      10 : a-c b-f   -> AGREE</pre>
+<div class="box key"><p>So Blossom's answer is provably optimal here, and it is an answer that
+picks up <b>two</b> swaps at once &mdash; worth 10, versus 6 for the best single swap. That is
+the gain from doing the matching properly instead of repeatedly taking the best remaining
+pair.</p></div>
+
+<h2>6. One more wrinkle: the pairs must not touch <i>each other</i></h2>
+<p>There is a second, subtler use of the same "don't touch" idea. We banned the two cells
+<i>within</i> a pair from being neighbours. But if we apply two swaps at once, say
+<b>a&#8211;c</b> and <b>b&#8211;f</b>, then <b>a</b> and <b>b</b> are neighbours across the two
+pairs &mdash; and we are right back in the same trap, because each one's required colour is the
+other's content and both are moving.</p>
+<p>The fix is to require an <b>induced</b> matching: no cell of one pair may neighbour a cell of
+another. The solver checks it directly. Applying both of Blossom's pairs anyway gives:</p>
+<pre>[check] applying Blossom's 2 pairs WITHOUT the filter:
+         predicted 10, measured 6  -> NOT additive</pre>
+<div class="box warn"><p><b>Read that line carefully &mdash; it is the reason a matching solver
+alone is not the end of the story.</b> The two individual gains were 6 and 4, so the naive
+prediction was 10. The board only improved by 6, because the shared edge <b>a&#8211;b</b> made
+the two swaps interfere. The sum of parts is not the whole.</p></div>
+<p>So after the matching, the operator greedily walks the matched pairs in decreasing order of
+gain and keeps a pair only if it touches no already-kept pair:</p>
+<pre>--- greedy filter (additivity requires an INDUCED matching) ---
+  keep a-c (gain 6)
+  drop b-f (touches an already chosen pair)
+  drop b-d (touches an already chosen pair)
+  drop d-f (touches an already chosen pair)</pre>
+<p>Enumerating all 25 matchings confirms the filter lost nothing on this instance: <b>9</b> of the
+25 are induced, and the best induced matching is worth <b>6</b> &mdash; exactly the
+<b>a&#8211;c</b> the greedy filter kept.</p>
+<pre>brute-force MAX WEIGHT INDUCED MATCH = 6 : a-c</pre>
+<p class="legend">On a 2&#215;3 window an induced matching can never hold more than one pair,
+which is why this example lands on a single swap. On larger windows several survive, and that is
+where the matching earns its keep. Choosing a maximum-weight <i>induced</i> matching is
+NP-hard in general, so Blossom's ordinary matching plus this filter is a practical compromise,
+not an exact solver for the induced problem.</p>
+
+<h2>7. Applying the swap</h2>
+<p>Swap <b>a</b> and <b>c</b>, with the rotations the search chose (piece&nbsp;122 was at
+rotation&nbsp;3, piece&nbsp;200 at rotation&nbsp;2; each keeps its own rotation, so the two tiles
+simply trade places):</p>
+<pre>swap a&lt;-&gt;c : piece 122 rot 3  &lt;-&gt;  piece 200 rot 2</pre>
+
+<div class="two">
+<div><div class="fig"><svg viewBox="-32 -32 462 344" width="100%" style="max-width:502px" role="img" aria-label="before"><rect x="-26" y="-26" width="406" height="288" rx="8" fill="#eef1f5" stroke="#c9d2dd" stroke-width="2"/><line x1="59.0" y1="59.0" x2="59.0" y2="177.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="59.0" y1="59.0" x2="177.0" y2="59.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="59.0" y1="177.0" x2="59.0" y2="295.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="59.0" y1="177.0" x2="177.0" y2="177.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="59.0" y1="295.0" x2="177.0" y2="295.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="177.0" y1="59.0" x2="177.0" y2="177.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="177.0" y1="177.0" x2="177.0" y2="295.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><g transform="translate(0,0)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#808080" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">20</text><polygon points="118,0 118,118 59.0,59.0" fill="#fffac8" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">14</text><polygon points="118,118 0,118 59.0,59.0" fill="#000075" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">19</text><polygon points="0,118 0,0 59.0,59.0" fill="#fabebe" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">10</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">a</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p122 r3</text></g><g transform="translate(0,118)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#f032e6" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">8</text><polygon points="118,0 118,118 59.0,59.0" fill="#fabebe" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">10</text><polygon points="118,118 0,118 59.0,59.0" fill="#aaffc3" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">16</text><polygon points="0,118 0,0 59.0,59.0" fill="#808080" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">20</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">b</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p129 r1</text></g><g transform="translate(0,236)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#2f4f4f" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">21</text><polygon points="118,0 118,118 59.0,59.0" fill="#f032e6" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">8</text><polygon points="118,118 0,118 59.0,59.0" fill="#fffac8" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">14</text><polygon points="0,118 0,0 59.0,59.0" fill="#aaffc3" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">16</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">c</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p200 r2</text></g><g transform="translate(118,0)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#800000" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">15</text><polygon points="118,0 118,118 59.0,59.0" fill="#911eb4" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">6</text><polygon points="118,118 0,118 59.0,59.0" fill="#f032e6" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">8</text><polygon points="0,118 0,0 59.0,59.0" fill="#f032e6" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">8</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">d</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p178 r1</text></g><g transform="translate(118,118)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#911eb4" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">6</text><polygon points="118,0 118,118 59.0,59.0" fill="#ffd8b1" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">18</text><polygon points="118,118 0,118 59.0,59.0" fill="#911eb4" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">6</text><polygon points="0,118 0,0 59.0,59.0" fill="#800000" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">15</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">e</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p141 r1</text></g><g transform="translate(118,236)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#aaffc3" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">16</text><polygon points="118,0 118,118 59.0,59.0" fill="#800000" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">15</text><polygon points="118,118 0,118 59.0,59.0" fill="#ffe119" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">3</text><polygon points="0,118 0,0 59.0,59.0" fill="#46f0f0" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">7</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">f</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p210 r2</text></g></svg>
+<div class="cap"><b>Before.</b> 0/7 internal edges matched.</div></div></div>
+<div><div class="fig"><svg viewBox="-32 -32 462 344" width="100%" style="max-width:502px" role="img" aria-label="after"><rect x="-26" y="-26" width="406" height="288" rx="8" fill="#eef1f5" stroke="#c9d2dd" stroke-width="2"/><line x1="59.0" y1="59.0" x2="59.0" y2="177.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="59.0" y1="59.0" x2="177.0" y2="59.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="59.0" y1="177.0" x2="59.0" y2="295.0" stroke="#1b9e4b" stroke-width="7" stroke-linecap="round"/><line x1="59.0" y1="177.0" x2="177.0" y2="177.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="59.0" y1="295.0" x2="177.0" y2="295.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="177.0" y1="59.0" x2="177.0" y2="177.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><line x1="177.0" y1="177.0" x2="177.0" y2="295.0" stroke="#d62728" stroke-width="7" stroke-linecap="round"/><g transform="translate(0,0)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#2f4f4f" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">21</text><polygon points="118,0 118,118 59.0,59.0" fill="#f032e6" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">8</text><polygon points="118,118 0,118 59.0,59.0" fill="#fffac8" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">14</text><polygon points="0,118 0,0 59.0,59.0" fill="#aaffc3" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">16</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">a</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p200 r2</text></g><g transform="translate(0,118)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#f032e6" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">8</text><polygon points="118,0 118,118 59.0,59.0" fill="#fabebe" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">10</text><polygon points="118,118 0,118 59.0,59.0" fill="#aaffc3" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">16</text><polygon points="0,118 0,0 59.0,59.0" fill="#808080" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">20</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">b</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p129 r1</text></g><g transform="translate(0,236)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#808080" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">20</text><polygon points="118,0 118,118 59.0,59.0" fill="#fffac8" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">14</text><polygon points="118,118 0,118 59.0,59.0" fill="#000075" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">19</text><polygon points="0,118 0,0 59.0,59.0" fill="#fabebe" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">10</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">c</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p122 r3</text></g><g transform="translate(118,0)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#800000" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">15</text><polygon points="118,0 118,118 59.0,59.0" fill="#911eb4" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">6</text><polygon points="118,118 0,118 59.0,59.0" fill="#f032e6" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">8</text><polygon points="0,118 0,0 59.0,59.0" fill="#f032e6" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">8</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">d</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p178 r1</text></g><g transform="translate(118,118)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#911eb4" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">6</text><polygon points="118,0 118,118 59.0,59.0" fill="#ffd8b1" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">18</text><polygon points="118,118 0,118 59.0,59.0" fill="#911eb4" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">6</text><polygon points="0,118 0,0 59.0,59.0" fill="#800000" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">15</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">e</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p141 r1</text></g><g transform="translate(118,236)" opacity="1.0"><polygon points="0,0 118,0 59.0,59.0" fill="#aaffc3" stroke="#222" stroke-width="1.5"/><text x="59.0" y="23.6" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">16</text><polygon points="118,0 118,118 59.0,59.0" fill="#800000" stroke="#222" stroke-width="1.5"/><text x="94.4" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">15</text><polygon points="118,118 0,118 59.0,59.0" fill="#ffe119" stroke="#222" stroke-width="1.5"/><text x="59.0" y="101.48" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">3</text><polygon points="0,118 0,0 59.0,59.0" fill="#46f0f0" stroke="#222" stroke-width="1.5"/><text x="23.6" y="59.0" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#000">7</text><circle cx="59.0" cy="59.0" r="20" fill="#fff" stroke="#222" stroke-width="1.5"/><text x="59.0" y="56.0" text-anchor="middle" font-size="14" font-weight="700" fill="#111">f</text><text x="59.0" y="70.0" text-anchor="middle" font-size="10" fill="#555">p210 r2</text></g></svg>
+<div class="cap"><b>After.</b> 1/7 internal edges matched.</div></div></div>
+</div>
+
+<p>Cell <b>a</b> now shows colours 21,&nbsp;8,&nbsp;14,&nbsp;16 where it needs
+21,&nbsp;20,&nbsp;15,&nbsp;16 &mdash; its North edge is now satisfied. Cell <b>c</b> shows
+20,&nbsp;14,&nbsp;19,&nbsp;10 where it needs 19,&nbsp;11,&nbsp;16,&nbsp;10 &mdash; its West edge
+is now satisfied.</p>
+<pre>predicted gain 6, measured gain 6, cost 878 -&gt; 872</pre>
+<div class="box key"><p><b>Predicted equals measured, exactly.</b> That is the payoff for all the
+care about which pairs are legal: the gain we computed from the matching is the gain the board
+actually delivers, to the unit.</p></div>
+
+<h2>8. Summary</h2>
+<ol>
+<li>The move is: <b>swap two tiles, re-spin each independently</b>.</li>
+<li>Two tiles may be swapped only if they are <b>not neighbours</b>, otherwise the swap's value
+ cannot be written down in advance. Hence the graph is the <b>complement of the grid</b>.</li>
+<li>Picking the best set of simultaneous swaps is a <b>maximum-weight matching</b> on that
+ complement graph.</li>
+<li>On 2&#215;3 the complement already contains <b>two triangles</b>, so it is
+ <b>not bipartite</b>.</li>
+<li>Therefore <b>Hungarian is inapplicable</b>: it needs two distinct sides, and the odd-set
+ polytope it cannot express would let a fractional answer of 1.5 stand in for a true optimum of
+ 1.</li>
+<li><b>Blossom</b> handles exactly the missing ingredient &mdash; odd sets &mdash; and returns
+ the provably optimal matching (verified here against brute force over all 25 matchings).</li>
+<li>The matched pairs must additionally form an <b>induced</b> matching or the gains do not add
+ up; measured directly, predicting 10 delivers only 6.</li>
+</ol>
+
+<hr>
+<p class="legend">Generated from <code>Eternity-Blossom</code>. The matching is computed by
+Blossom VI (Arkhipov &amp; Kolmogorov, arXiv:2604.20351). Reproduce the numbers with the
+<code>coarse swap</code> operator on a 2&#215;3 window; the verification of Blossom against
+brute force, the triangle count, the odd-set demonstration and the additivity check are all
+printed by the accompanying example program.</p>
+
+</div></body></html>

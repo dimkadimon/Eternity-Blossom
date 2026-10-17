@@ -114,3 +114,8 @@ endif()
 
 enable_testing()
 add_test(NAME selftest COMMAND eternity-blossom selftest --pieces "${CMAKE_CURRENT_SOURCE_DIR}/data/e2pieces.txt" --trials 10)
+
+# Standalone generator for the 2x3 worked example in
+# experiments/blossom-2x3-example.html.
+add_executable(demo-2x3 tools/demo_2x3.cpp)
+target_link_libraries(demo-2x3 PRIVATE e2_core)

@@ -66,6 +66,7 @@ cloned automatically at configure time (or point CMake at a local checkout with
 | `bound` | compute the stub-matching lower bound at the root |
 | `rotbound` | **upper bound on what rotation alone can reach** for a placement |
 | `bench-subsolve` | compare the branch-and-bound lower bounds on identical problems |
+| `dissect` | exact Hungarian reassignment over a library of dissections |
 | `polish` | run the exact operators on an existing board |
 | `selftest` | six correctness checks, each verified against brute force |
 
@@ -207,3 +208,23 @@ checkers — clean grey border, every piece used once). Typical single-core runs
 The gap is discussed honestly in both that file and
 [DESIGN.md §8](DESIGN.md#8-results-and-how-far-this-is-from-the-record),
 together with a ranked roadmap of what would actually close it.
+
+## Dissection reassignment (bipartite / Hungarian)
+
+`./build/eternity-blossom dissect --board results/best_441.txt --dissections 1000`
+
+Dissects the board into groups (dominoes, L/Z shapes, rows, columns, squares), takes an
+independent set of groups, freezes the rest and reassigns them exactly. Bipartite, so
+Hungarian. On any board the searcher has already optimised it finds **exactly zero**
+improvement, across 1057 dissections in 0.6 s -- a converged board is a fixed point of
+this neighbourhood. From a random start it goes from 26/480 to 323/480 in 1.2 s.
+Full write-up: [`experiments/DISSECTION.md`](experiments/DISSECTION.md).
+
+## Why tile swapping is non-bipartite: a 2x3 worked example
+
+[`experiments/blossom-2x3-example.html`](experiments/blossom-2x3-example.html) is a
+self-contained page (open it directly in a browser) that works the swap-matching operator
+end to end on a 2x3 window with real numbers: the original board, every swap gain, the
+matching graph with all its weights, the two triangles that make it non-bipartite, why
+Hungarian cannot be used, Blossom's answer verified against brute force, and the final
+board. Regenerate the numbers with `./build/demo-2x3 --random`.
