@@ -13,6 +13,8 @@
 #include "e2/coarse.hpp"
 #include "e2/dissect.hpp"
 #include "e2/assign.hpp"
+#include "e2/tjoin.hpp"
+#include "e2/popsearch.hpp"
 #include "e2/rotation.hpp"
 #include "e2/subsolve.hpp"
 
@@ -697,6 +699,109 @@ bool SelfTestDissect(const Puzzle& pz, int trials, uint64_t seed) {
         long long v = 0;
         for (int i = 0; i < n; ++i) v += c[i][col[i]];
         if (v != got) { std::cerr << "  dissect: returned permutation is inconsistent\n"; return false; }
+    }
+    return true;
+}
+
+
+// -------------------------------------------------------------------- T-join
+bool SelfTestTJoin(const Puzzle& pz, int trials, uint64_t seed) {
+    std::mt19937 rng((unsigned)seed);
+    Board b(pz);
+
+    // ---- the join's odd-degree vertices must be exactly the terminal set
+    for (int t = 0; t < std::max(4, trials); ++t) {
+        std::vector<int> term;
+        std::vector<char> isT(pz.ncells, 0);
+        const int want = 4 + 2 * (int)(rng() % 10);
+        while ((int)term.size() < want) {
+            const int c = (int)(rng() % (uint64_t)pz.ncells);
+            if (isT[c]) continue;
+            isT[c] = 1;
+            term.push_back(c);
+        }
+        std::vector<std::vector<int>> chains;
+        if (!TJoinChains(pz, term, chains)) {
+            std::cerr << "  tjoin: chain construction failed\n";
+            return false;
+        }
+        std::vector<int> deg(pz.ncells, 0);
+        for (auto& ch : chains)
+            for (size_t i = 0; i + 1 < ch.size(); ++i) { deg[ch[i]]++; deg[ch[i + 1]]++; }
+        for (int c = 0; c < pz.ncells; ++c) {
+            if (isT[c] && deg[c] % 2 == 0) {
+                std::cerr << "  tjoin: terminal " << c << " has even degree " << deg[c] << "\n";
+                return false;
+            }
+            if (!isT[c] && deg[c] % 2 == 1) {
+                std::cerr << "  tjoin: non-terminal " << c << " has odd degree " << deg[c] << "\n";
+                return false;
+            }
+        }
+    }
+
+    // ---- the operator preserves the permutation and reports honest numbers
+    for (int t = 0; t < std::max(4, trials); ++t) {
+        RandomiseBoard(b, rng);
+        TJoinParams tp;
+        tp.acceptOnlyImproving = false;
+        const long long before = b.cost;
+        TJoinResult r = TJoinPass(b, tp);
+        if (!r.ran) continue;
+        std::vector<int> seen(pz.ncells, 0);
+        for (int c = 0; c < pz.ncells; ++c) seen[b.pc[c]]++;
+        for (int c = 0; c < pz.ncells; ++c)
+            if (seen[c] != 1) { std::cerr << "  tjoin: board is not a permutation\n"; return false; }
+        if (r.costAfter != b.cost) { std::cerr << "  tjoin: cost bookkeeping wrong\n"; return false; }
+        if (r.actualGain != before - b.cost) {
+            std::cerr << "  tjoin: gain " << r.actualGain << " != measured " << (before - b.cost)
+                      << " (the blossom-gain-reporting bug)\n";
+            return false;
+        }
+    }
+    return true;
+}
+
+// ----------------------------------------------------------------- crossover
+bool SelfTestCrossover(const Puzzle& pz, int trials, uint64_t seed) {
+    std::mt19937 rng((unsigned)seed);
+    Board ba(pz), bb(pz);
+    for (int t = 0; t < std::max(8, trials * 2); ++t) {
+        RandomiseBoard(ba, rng);
+        RandomiseBoard(bb, rng);
+        const int h = 1 + (int)(rng() % (uint64_t)std::min(pz.H, 10));
+        const int w = 1 + (int)(rng() % (uint64_t)std::min(pz.W, 10));
+        const int r0 = (int)(rng() % (uint64_t)(pz.H - h + 1));
+        const int c0 = (int)(rng() % (uint64_t)(pz.W - w + 1));
+        for (int mode = 0; mode < 2; ++mode) {
+            Board ctx(pz);
+            ctx.load(bb.pc, bb.rt);
+            std::vector<int> opc, ort;
+            if (!CrossoverRegion(pz, ba.pc, ba.rt, bb.pc, bb.rt, r0, c0, h, w, opc, ort,
+                                 &ctx, mode == 1))
+                return false;
+            std::vector<int> seen(pz.ncells, 0);
+            for (int c = 0; c < pz.ncells; ++c) {
+                if (opc[c] < 0 || opc[c] >= pz.ncells) {
+                    std::cerr << "  crossover: bad piece\n";
+                    return false;
+                }
+                seen[opc[c]]++;
+            }
+            for (int c = 0; c < pz.ncells; ++c)
+                if (seen[c] != 1) {
+                    std::cerr << "  crossover: piece " << c << " used " << seen[c] << " times\n";
+                    return false;
+                }
+            for (int r = r0; r < r0 + h; ++r)
+                for (int c = c0; c < c0 + w; ++c) {
+                    const int cell = r * pz.W + c;
+                    if (opc[cell] != ba.pc[cell] || ort[cell] != ba.rt[cell]) {
+                        std::cerr << "  crossover: rectangle does not match parent A\n";
+                        return false;
+                    }
+                }
+        }
     }
     return true;
 }

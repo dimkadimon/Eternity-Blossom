@@ -13,6 +13,8 @@
 #include <vector>
 
 #include "e2/dissect.hpp"
+#include "e2/popsearch.hpp"
+#include "e2/tjoin.hpp"
 #include "e2/matching.hpp"
 #include "e2/selftest_extra.hpp"
 #include "e2/operators.hpp"
@@ -32,11 +34,20 @@ void PrintUsage(const char* prog) {
         << "  verify   re-score a saved board from scratch\n"
         << "  bound    compute the stub-matching lower bound at the root\n"
         << "  rotbound upper bound on what rotation alone can reach for a placement\n"
+        << "  tjoin            T-join moves (Blossom + cyclic shifts)\n"
+        << "  pop              memetic search: population + crossover\n"
         << "  dissect         exact Hungarian reassignment over a library of dissections\n"
         << "  bench-subsolve  compare lower bounds on identical sub-board problems\n"
         << "  polish  --board B  run the exact operators on an existing board\n"
         << "  selftest correctness checks (matching, increments, bound)\n\n"
-        << "options for solve:\n"
+        << "options for pop:\n"
+        << "  --pop N --elite N --tournament N   population, elites kept, tournament size\n"
+        << "  --init S --breed S   local search seconds per individual / per child\n"
+        << "  --reg-min N --reg-max N   crossover rectangle side range\n"
+        << "  --breed-t0 F --breed-t1 F  SA temperatures when refining a child\n"
+        << "  --no-crossover       independent restarts instead (control run)\n"
+        << "  --trace              print each generation\n"
+        << "\noptions for solve:\n"
         << "  --pieces FILE     piece file (default data/e2pieces.txt)\n"
         << "  --w N --h N       board size (default: as square as the piece count allows)\n"
         << "  --time SEC        wall clock limit (default 60)\n"
@@ -778,41 +789,51 @@ int CmdSelfTest(const Args& a) {
     std::cout << "engine: " << MatchingEngineName() << "\n";
     bool ok = true;
     const int trials = a.getInt("--trials", 40);
-    std::cout << "[1/7] matching vs brute force ... "; std::cout.flush();
+    std::cout << "[1/9] matching vs brute force ... "; std::cout.flush();
     ok &= SelfTestMatching(trials, 12, 999);
     std::cout << (ok ? "ok\n" : "FAILED\n");
     if (!ok) return 1;
 
     Puzzle pz = Puzzle::load(a.get("--pieces", "data/e2pieces.txt"));
-    std::cout << "[2/7] incremental scoring ... "; std::cout.flush();
+    std::cout << "[2/9] incremental scoring ... "; std::cout.flush();
     bool ok2 = SelfTestIncrements(pz);
     std::cout << (ok2 ? "ok\n" : "FAILED\n");
     ok &= ok2;
 
-    std::cout << "[3/7] stub bound admissibility ... "; std::cout.flush();
+    std::cout << "[3/9] stub bound admissibility ... "; std::cout.flush();
     bool ok3 = SelfTestBound(40, 4242);
     std::cout << (ok3 ? "ok\n" : "FAILED\n");
     ok &= ok3;
 
-    std::cout << "[4/7] coarse moves (block rotate/swap, dominoes) ... "; std::cout.flush();
+    std::cout << "[4/9] coarse moves (block rotate/swap, dominoes) ... "; std::cout.flush();
     bool ok4 = SelfTestCoarse(pz, std::max(2, trials / 8), 31337);
     std::cout << (ok4 ? "ok\n" : "FAILED\n");
     ok &= ok4;
 
-    std::cout << "[5/7] rotation strip DP and upper bound ... "; std::cout.flush();
+    std::cout << "[5/9] rotation strip DP and upper bound ... "; std::cout.flush();
     bool ok5 = SelfTestRotation(pz, std::max(3, trials / 4), 5150);
     std::cout << (ok5 ? "ok\n" : "FAILED\n");
     ok &= ok5;
 
-    std::cout << "[6/7] sub-board branch and bound vs brute force ... "; std::cout.flush();
+    std::cout << "[6/9] sub-board branch and bound vs brute force ... "; std::cout.flush();
     bool ok6 = SelfTestSubSolve(pz, 2, 777);
     std::cout << (ok6 ? "ok\n" : "FAILED\n");
     ok &= ok6;
 
-    std::cout << "[7/7] dissection reassignment exactness ... "; std::cout.flush();
+    std::cout << "[7/9] dissection reassignment exactness ... "; std::cout.flush();
     bool ok7 = SelfTestDissect(pz, 8, 2024);
     std::cout << (ok7 ? "ok\n" : "FAILED\n");
     ok &= ok7;
+
+    std::cout << "[8/9] T-join chains and cyclic shifts ... "; std::cout.flush();
+    bool ok8 = SelfTestTJoin(pz, trials, 555);
+    std::cout << (ok8 ? "ok\n" : "FAILED\n");
+    ok &= ok8;
+
+    std::cout << "[9/9] memetic crossover ... "; std::cout.flush();
+    bool ok9 = SelfTestCrossover(pz, trials, 909);
+    std::cout << (ok9 ? "ok\n" : "FAILED\n");
+    ok &= ok9;
 
     std::cout << (ok ? "\nall self-tests passed\n" : "\nSELF-TESTS FAILED\n");
     return ok ? 0 : 1;
@@ -1082,6 +1103,132 @@ int CmdDissect(const Args& a) {
     return 0;
 }
 
+
+// ----------------------------------------------------------------- population
+// Memetic search: a population of boards, local search on each, and a crossover
+// that transplants a rectangle from one parent into another.  See popsearch.hpp
+// for why this layer exists at all -- every exact operator here converges and
+// then reports zero, and running it longer does not help.
+int CmdPop(const Args& a) {
+    Puzzle pz = Puzzle::load(a.get("--pieces", "data/e2pieces.txt"),
+                             a.getInt("--w", 0), a.getInt("--h", 0));
+    PopulationParams pp;
+    pp.seed = (uint64_t)a.getInt("--seed", 1);
+    pp.timeLimitSeconds = a.getDouble("--time", 300.0);
+    pp.popSize = a.getInt("--pop", 12);
+    pp.initSeconds = a.getDouble("--init", 12.0);
+    pp.breedSeconds = a.getDouble("--breed", 6.0);
+    pp.elite = a.getInt("--elite", 2);
+    pp.tournament = a.getInt("--tournament", 3);
+    pp.regionMin = a.getInt("--reg-min", 3);
+    pp.regionMax = a.getInt("--reg-max", 9);
+    pp.breedT0 = a.getDouble("--breed-t0", 0.30);
+    pp.breedT1 = a.getDouble("--breed-t1", 0.05);
+    pp.useCrossover = !a.has("--no-crossover");
+    pp.repairAssign = !a.has("--no-repair-assign");
+    pp.verbose = a.has("--verbose");
+    pp.trace = a.has("--trace");
+
+    // the local search run inside every individual
+    SearchParams& sp = pp.search;
+    sp.seed = pp.seed;
+    sp.accept = a.has("--accept-la") ? AcceptMode::LAHC : AcceptMode::SA;
+    sp.saT0 = a.getDouble("--t0", 3.0);
+    sp.saT1 = a.getDouble("--t1", 0.1);
+    sp.sampleK = a.getInt("--sample", 16);
+    sp.assignCells = a.getInt("--assign", 256);
+    sp.wBorder = a.getInt("--wborder", 8);
+    sp.useRotStrip = !a.has("--no-strip");
+    sp.useCoarseSwap = !a.has("--no-coarse");
+    sp.useSubSolve = a.has("--subsolve");
+    sp.subSolveH = a.getInt("--subsolve-h", 2);
+    sp.subSolveW = a.getInt("--subsolve-w", 3);
+
+    std::cout << "memetic search: population " << pp.popSize << ", init "
+              << pp.initSeconds << "s each, breed " << pp.breedSeconds
+              << "s each, crossover " << (pp.useCrossover ? "on" : "OFF")
+              << ", regions " << pp.regionMin << ".." << pp.regionMax << "\\n";
+
+    PopulationOutcome r = PopulationSearch(pz, pp);
+    std::cout << "\\n=== result ===\\n";
+    std::cout << "matched edges : " << r.score << " / " << pz.numEdges() << "\\n";
+    std::cout << "mismatched    : " << (pz.numEdges() - r.score) << "\\n";
+    std::cout << "border bad    : " << r.borderBad << "\\n";
+    std::cout << "cost          : " << r.cost << "\\n";
+    std::cout << "generations   : " << r.stats.generations
+              << "  crossovers " << r.stats.crossovers
+              << "  improvements " << r.stats.improvements << "\\n";
+    if (r.stats.children)
+        std::cout << "child cost BEFORE refinement: mean "
+                  << (int)(r.stats.childCostSum / r.stats.children)
+                  << "  best " << r.stats.childCostMin
+                  << "   (best parent " << (int)r.stats.bestCost << ")" << "\n";
+    std::cout << "init seconds  : " << r.stats.initSeconds
+              << "  breed seconds " << r.stats.breedSeconds
+              << "  total " << r.stats.seconds << "\\n";
+
+    const std::string outPath = a.get("--out", "");
+    if (!outPath.empty()) {
+        SaveBoard(outPath, pz, r.pc, r.rt, "memetic seed=" + std::to_string(pp.seed));
+        std::cout << "board written : " << outPath << "\\n";
+    }
+    return 0;
+}
+
+
+// ------------------------------------------------------------------- tjoin
+// T-join moves: connect the unhappy cells with a minimum-weight T-join
+// (Blossom, non-bipartite) and rotate the pieces along each chain.  See
+// tjoin.hpp.  --random starts from a randomised board, because a converged
+// board has few unhappy cells and the move has little to work with.
+int CmdTJoin(const Args& a) {
+    Puzzle pz = Puzzle::load(a.get("--pieces", "data/e2pieces.txt"),
+                             a.getInt("--w", 0), a.getInt("--h", 0));
+    Board b(pz);
+    const std::string boardPath = a.get("--board", "");
+    if (boardPath.empty() || a.has("--random")) {
+        std::mt19937 r0((unsigned)a.getInt("--seed", 1));
+        b.randomizeStructured(r0);
+    } else {
+        std::vector<int> pc, rt;
+        if (!LoadBoard(boardPath, pc, rt)) { std::cerr << "cannot read " << boardPath << "\n"; return 1; }
+        b.load(pc, rt);
+    }
+    TJoinParams tp;
+    tp.maxCells = a.getInt("--cells", 40);
+    tp.maxPaths = a.getInt("--paths", 24);
+    tp.maxPathLen = a.getInt("--path-len", 24);
+    tp.acceptOnlyImproving = !a.has("--accept-any");
+    tp.verbose = a.has("--verbose");
+
+    const int rounds = a.getInt("--rounds", 200);
+    const double limit = a.getDouble("--time", 30.0);
+    const auto T0 = std::chrono::steady_clock::now();
+    auto el = [&]() {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - T0).count();
+    };
+    const long long before = b.cost;
+    int applied = 0, passes = 0, moved = 0, chains = 0;
+    for (int r = 0; r < rounds && el() < limit; ++r) {
+        TJoinResult res = TJoinPass(b, tp);
+        ++passes;
+        if (!res.ran) break;
+        if (!res.error.empty()) { std::cerr << "matching: " << res.error << "\n"; return 1; }
+        chains += res.paths;
+        moved += res.movedCells;
+        if (res.actualGain > 0) ++applied;
+        if (res.paths == 0) break;
+    }
+    std::cout << "passes " << passes << ", improving " << applied
+              << ", chains " << chains << ", cells moved " << moved << "\n";
+    std::cout << "cost " << before << " -> " << b.cost << "  (gain " << (before - b.cost)
+              << "),  score " << (480 - before / 2) << " -> " << (480 - b.cost / 2) << "/480\n";
+    std::cout << "time " << el() << " s\n";
+    const std::string outPath = a.get("--out", "");
+    if (!outPath.empty()) { SaveBoard(outPath, pz, b.pc, b.rt); std::cout << "wrote " << outPath << "\n"; }
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1094,6 +1241,8 @@ int main(int argc, char** argv) {
         if (cmd == "bound") return CmdBound(args);
         if (cmd == "rotbound") return CmdRotBound(args);
         if (cmd == "bench-subsolve") return CmdBenchSubSolve(args);
+        if (cmd == "tjoin") return CmdTJoin(args);
+        if (cmd == "pop") return CmdPop(args);
         if (cmd == "dissect") return CmdDissect(args);
         if (cmd == "polish") return CmdPolish(args);
         if (cmd == "selftest") return CmdSelfTest(args);

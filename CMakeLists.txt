@@ -86,6 +86,8 @@ add_library(e2_core STATIC
         src/assign.cpp
         src/coarse.cpp
         src/dissect.cpp
+        src/popsearch.cpp
+        src/tjoin.cpp
         src/rotation.cpp
         src/subsolve.cpp
         src/selftest_extra.cpp
