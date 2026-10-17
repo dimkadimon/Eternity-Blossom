@@ -83,7 +83,9 @@ add_library(e2_core STATIC
         src/matching.cpp
         src/operators.cpp
         src/search.cpp
+        src/assign.cpp
         src/coarse.cpp
+        src/dissect.cpp
         src/rotation.cpp
         src/subsolve.cpp
         src/selftest_extra.cpp

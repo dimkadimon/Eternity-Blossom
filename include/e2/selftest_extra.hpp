@@ -29,4 +29,12 @@ bool SelfTestRotation(const Puzzle& pz, int trials, uint64_t seed);
 // the stub bound, to confirm the bound prunes work without pruning the optimum.
 bool SelfTestSubSolve(const Puzzle& pz, int trials, uint64_t seed);
 
+// Dissection reassignment.  The whole claim of dissect.hpp is that the
+// independence of the chosen set makes the cost ADDITIVE, so the Hungarian
+// optimum is the true optimum -- which means the improvement the solver
+// predicts must equal, exactly, the improvement measured on the real board.
+// Any discrepancy at all is a bug: either a group's internal edges moved, or
+// two selected groups were allowed to touch.
+bool SelfTestDissect(const Puzzle& pz, int trials, uint64_t seed);
+
 }  // namespace e2

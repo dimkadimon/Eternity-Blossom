@@ -7,9 +7,12 @@
 #include <chrono>
 #include <iostream>
 #include <numeric>
+#include <climits>
 #include <random>
 
 #include "e2/coarse.hpp"
+#include "e2/dissect.hpp"
+#include "e2/assign.hpp"
 #include "e2/rotation.hpp"
 #include "e2/subsolve.hpp"
 
@@ -82,6 +85,7 @@ bool SelfTestCoarse(const Puzzle& pz, int trials, uint64_t seed) {
             for (int bi = 0; bi < (int)bs.blocks.size(); ++bi) {
                 const int before = InternalMatchedCount(b, bs, bi);
                 for (int q = 1; q < bs.blocks[bi].nrot; ++q) {
+                    if (!bs.blocks[bi].rotInPlace[q]) continue;
                     const int predicted = BlockRotateDelta(b, bs, bi, q);
                     const long long c0 = b.cost;
                     const std::vector<int> sp = b.pc, sr = b.rt;
@@ -106,8 +110,14 @@ bool SelfTestCoarse(const Puzzle& pz, int trials, uint64_t seed) {
             for (int k = 0; k < 8 * trials; ++k) {
                 const int ai = (int)(rng() % nb), bi = (int)(rng() % nb);
                 if (ai == bi || bs.adjacent(ai, bi)) continue;
+                // Shape-preserving rotations only: the coarse swap keeps each
+                // block's cells where they are and just exchanges contents, so
+                // the two shapes must still match.  (Arbitrary rotations, where
+                // a group moves to a differently shaped location, are covered
+                // by the dissection operator instead.)
                 const int qa = (int)(rng() % bs.blocks[ai].nrot);
                 const int qb = (int)(rng() % bs.blocks[bi].nrot);
+                if (!bs.blocks[ai].rotInPlace[qa] || !bs.blocks[bi].rotInPlace[qb]) continue;
                 const int predicted = BlockSwapDelta(b, bs, ai, bi, qa, qb);
                 const long long c0 = b.cost;
                 const std::vector<int> sp = b.pc, sr = b.rt;
@@ -145,21 +155,24 @@ bool SelfTestCoarse(const Puzzle& pz, int trials, uint64_t seed) {
 
         RandomiseBoard(b, rng);
         for (int bi = 0; bi < (int)bs.blocks.size(); ++bi) {
-            const int before = InternalMatchedCount(b, bs, bi);
-            const int predicted = BlockRotateDelta(b, bs, bi, 1);
-            const long long c0 = b.cost;
-            const std::vector<int> sp = b.pc, sr = b.rt;
-            ApplyBlockRotate(b, bs, bi, 1);
-            if (b.cost - c0 != predicted) {
-                std::cerr << "  coarse: domino flip delta " << predicted << " != actual "
-                          << (b.cost - c0) << "\n";
-                return false;
+            for (int q = 1; q < bs.blocks[bi].nrot; ++q) {
+                if (!bs.blocks[bi].rotInPlace[q]) continue;  // would leave the cells
+                const int before = InternalMatchedCount(b, bs, bi);
+                const int predicted = BlockRotateDelta(b, bs, bi, q);
+                const long long c0 = b.cost;
+                const std::vector<int> sp = b.pc, sr = b.rt;
+                ApplyBlockRotate(b, bs, bi, q);
+                if (b.cost - c0 != predicted) {
+                    std::cerr << "  coarse: domino rotation delta " << predicted
+                              << " != actual " << (b.cost - c0) << "\n";
+                    return false;
+                }
+                if (before != InternalMatchedCount(b, bs, bi)) {
+                    std::cerr << "  coarse: domino rotation changed the internal edge\n";
+                    return false;
+                }
+                b.load(sp, sr);
             }
-            if (before != InternalMatchedCount(b, bs, bi)) {
-                std::cerr << "  coarse: domino flip changed the internal edge\n";
-                return false;
-            }
-            b.load(sp, sr);
         }
     }
     return true;
@@ -400,6 +413,135 @@ bool SelfTestSubSolve(const Puzzle& pz, int trials, uint64_t seed) {
                 }
             }
         }
+    }
+    return true;
+}
+
+// -------------------------------------------------------------- dissections
+bool SelfTestDissect(const Puzzle& pz, int trials, uint64_t seed) {
+    std::mt19937 rng((unsigned)seed);
+    Board b(pz);
+
+    std::vector<std::pair<std::string, Dissection>> ds;
+    for (int i = 0; i < std::max(2, trials / 4); ++i)
+        ds.push_back({"dominoes", MakeDominoDissection(pz, seed + 31u * (unsigned)i + 1)});
+    ds.push_back({"squares 2", MakeSquareDissection(pz, 2)});
+    ds.push_back({"squares 4", MakeSquareDissection(pz, 4)});
+    ds.push_back({"rows", MakeRowStripDissection(pz)});
+    ds.push_back({"columns", MakeColumnStripDissection(pz)});
+    ds.push_back({"mixed", MakeMixedDissection(pz, seed + 7)});
+    ds.push_back({"mixed", MakeMixedDissection(pz, seed + 8)});
+
+    // ---- (1) every dissection is a partition into connected groups
+    for (auto& [name, d] : ds) {
+        std::vector<int> cover(pz.ncells, 0);
+        for (const Group& g : d.groups) {
+            if (g.cells.empty()) { std::cerr << "  dissect: empty group\n"; return false; }
+            for (int c : g.cells) cover[c]++;
+            // connected?
+            std::vector<char> seen(g.cells.size(), 0);
+            std::vector<int> stack{0};
+            seen[0] = 1;
+            int nseen = 1;
+            std::vector<int> idx(pz.ncells, -1);
+            for (size_t i = 0; i < g.cells.size(); ++i) idx[g.cells[i]] = (int)i;
+            while (!stack.empty()) {
+                const int v = stack.back();
+                stack.pop_back();
+                for (int s = 0; s < 4; ++s) {
+                    const int nb = pz.neigh[g.cells[v] * 4 + s];
+                    if (nb < 0) continue;
+                    const int j = idx[nb];
+                    if (j >= 0 && !seen[j]) { seen[j] = 1; ++nseen; stack.push_back(j); }
+                }
+            }
+            if (nseen != (int)g.cells.size()) {
+                std::cerr << "  dissect [" << d.name << "]: group of " << g.cells.size()
+                          << " cells is not connected: ";
+                for (int c : g.cells) std::cerr << "(" << c / pz.W << "," << c % pz.W << ") ";
+                std::cerr << "\n";
+                return false;
+            }
+            // four rotations always exist and always preserve the cell count
+            for (int q = 0; q < 4; ++q) {
+                if (!g.rotValid[q]) { std::cerr << "  dissect: rotation " << q << " invalid\n"; return false; }
+                if (g.dst[q].size() != g.cells.size()) { std::cerr << "  dissect: bad dst\n"; return false; }
+                std::vector<char> hit(g.cells.size(), 0);
+                for (int t : g.dst[q]) {
+                    if (t < 0 || t >= (int)g.cells.size() || hit[t]) {
+                        std::cerr << "  dissect: dst is not a permutation\n";
+                        return false;
+                    }
+                    hit[t] = 1;
+                }
+            }
+        }
+        for (int c = 0; c < pz.ncells; ++c)
+            if (cover[c] != 1) {
+                std::cerr << "  dissect (" << name << "): cell " << c << " covered " << cover[c]
+                          << " times\n";
+                return false;
+            }
+    }
+
+    // ---- (2) the operator is EXACT: predicted gain == measured gain
+    long long checked = 0, moved = 0;
+    for (auto& [name, d] : ds) {
+        for (int t = 0; t < std::max(2, trials / 2); ++t) {
+            RandomiseBoard(b, rng);
+            ReassignParams pr;
+            pr.maxGroups = 64;
+            pr.acceptOnlyImproving = false;   // so that the PREDICTION is testable
+                                              // even when the move is a loss
+            const long long before = b.cost;
+            ReassignResult r = DissectionReassign(b, d, pr, seed + (unsigned)t * 977u + 3u);
+            if (!r.ran) continue;
+            ++checked;
+            const long long actual = before - b.cost;
+            if (r.predicted != actual) {
+                std::cerr << "  dissect (" << name << "): predicted " << r.predicted
+                          << " != measured " << actual << " over " << r.groups << " groups\n";
+                return false;
+            }
+            if (r.predicted != 0) ++moved;
+            // the board must still be a legal permutation
+            std::vector<int> seen(pz.ncells, 0);
+            for (int c = 0; c < pz.ncells; ++c) seen[b.pc[c]]++;
+            for (int c = 0; c < pz.ncells; ++c)
+                if (seen[c] != 1) { std::cerr << "  dissect: board is not a permutation\n"; return false; }
+            if (b.cost != before - actual) { std::cerr << "  dissect: cost drift\n"; return false; }
+        }
+    }
+    if (checked == 0) { std::cerr << "  dissect: operator never ran\n"; return false; }
+    if (moved == 0) { std::cerr << "  dissect: operator never changed anything\n"; return false; }
+
+    // ---- (3) the assignment solver is OPTIMAL, not merely feasible.
+    // This is the load-bearing check behind every "predicted == 0" report: the
+    // claim that a converged board admits no improving reassignment is only as
+    // good as the guarantee that HungarianMin really returns the minimum.
+    for (int t = 0; t < std::max(8, trials * 4); ++t) {
+        const int n = 2 + (int)(rng() % 6);          // 2..7
+        std::vector<std::vector<int>> c((size_t)n, std::vector<int>(n, 0));
+        for (int i = 0; i < n; ++i)
+            for (int j = 0; j < n; ++j) c[i][j] = (int)(rng() % 2001) - 1000;
+        std::vector<int> col;
+        const long long got = HungarianMin(c, &col);
+        std::vector<int> perm(n);
+        for (int i = 0; i < n; ++i) perm[i] = i;
+        long long bf = LLONG_MAX;
+        do {
+            long long v = 0;
+            for (int i = 0; i < n; ++i) v += c[i][perm[i]];
+            bf = std::min(bf, v);
+        } while (std::next_permutation(perm.begin(), perm.end()));
+        if (got != bf) {
+            std::cerr << "  dissect: HungarianMin " << got << " != brute force " << bf
+                      << " on a " << n << "x" << n << " matrix\n";
+            return false;
+        }
+        long long v = 0;
+        for (int i = 0; i < n; ++i) v += c[i][col[i]];
+        if (v != got) { std::cerr << "  dissect: returned permutation is inconsistent\n"; return false; }
     }
     return true;
 }

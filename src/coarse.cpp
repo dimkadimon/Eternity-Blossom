@@ -3,6 +3,8 @@
 
 #include "e2/coarse.hpp"
 
+#include "e2/dissect.hpp"
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -16,43 +18,33 @@ namespace {
 // --------------------------------------------------------------- rotation maps
 void FillRotationMaps(Block& bl) {
     const int n = (int)bl.cells.size();
-    bl.nrot = (bl.kind == kSquare) ? 4 : 2;
-    bl.dst.assign(bl.nrot, std::vector<int>(n, 0));
-    bl.inv.assign(bl.nrot, std::vector<int>(n, 0));
-    bl.inc.assign(bl.nrot, 0);
+    // Every rigid motion is a rotation FOLLOWED BY A TRANSLATION, and a quarter
+    // turn about the origin maps a cell centre to a cell centre, so every shape
+    // has four orientations once the translation is allowed.  That includes a
+    // 1x2 domino: a quarter turn takes a horizontal domino to a vertical one.
+    bl.nrot = 4;
+    bl.dst.assign(4, std::vector<int>(n, 0));
+    bl.inv.assign(4, std::vector<int>(n, 0));
+    bl.inc.assign(4, 0);
+    bl.rotInPlace.assign(4, 0);
 
+    std::vector<std::pair<int, int>> offs(n);
     if (bl.kind == kSquare) {
-        const int s = bl.side;
-        for (int q = 0; q < 4; ++q) {
-            bl.inc[q] = q;
-            for (int dr = 0; dr < s; ++dr) {
-                for (int dc = 0; dc < s; ++dc) {
-                    // (dr,dc) -> (dc, s-1-dr), applied q times: a clockwise
-                    // rotation of the block about its centre.
-                    int y = dr, x = dc;
-                    for (int t = 0; t < q; ++t) {
-                        const int ny = x, nx = s - 1 - y;
-                        y = ny;
-                        x = nx;
-                    }
-                    bl.dst[q][dr * s + dc] = y * s + x;
-                }
-            }
-        }
+        for (int dr = 0; dr < bl.side; ++dr)
+            for (int dc = 0; dc < bl.side; ++dc) offs[dr * bl.side + dc] = {dr, dc};
     } else {
-        // A domino has a single non-trivial rigid motion: the 180 degree turn
-        // about its centre, which exchanges its two cells and half-turns both
-        // pieces.  (The "centre" is a lattice corner, not a cell centre, so the
-        // square formula above does not apply.)
-        bl.inc[0] = 0;
-        bl.dst[0][0] = 0;
-        bl.dst[0][1] = 1;
-        bl.inc[1] = 2;
-        bl.dst[1][0] = 1;
-        bl.dst[1][1] = 0;
+        offs[0] = {0, 0};
+        offs[1] = (bl.kind == kDominoH) ? std::make_pair(0, 1) : std::make_pair(1, 0);
     }
-    for (int q = 0; q < bl.nrot; ++q)
-        for (int i = 0; i < n; ++i) bl.inv[q][bl.dst[q][i]] = i;
+    for (int q = 0; q < 4; ++q) {
+        std::vector<std::pair<int, int>> out;
+        std::vector<int> dst;
+        RotateShapeOffsets(offs, q, out, dst);
+        bl.rotInPlace[q] = (out == offs) ? 1 : 0;
+        bl.inc[q] = q;
+        bl.dst[q] = dst;
+        for (int i = 0; i < n; ++i) bl.inv[q][dst[i]] = i;
+    }
 }
 
 BlockSet BuildBlockSet(const Puzzle& pz, std::vector<Block> blocks) {
@@ -263,6 +255,7 @@ CoarseRotateResult CoarseRotateSweep(Board& b, const BlockSet& bs, bool acceptEq
         const Block& bl = bs.blocks[bi];
         int bestQ = -1, bestD = 0;
         for (int q = 1; q < bl.nrot; ++q) {
+            if (!bl.rotInPlace[q]) continue;   // would move onto other cells
             const int d = BlockRotateDelta(b, bs, bi, q);
             ++res.tried;
             if (d < bestD || (acceptEqual && d == 0 && bestQ < 0)) {

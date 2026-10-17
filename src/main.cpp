@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "e2/dissect.hpp"
 #include "e2/matching.hpp"
 #include "e2/selftest_extra.hpp"
 #include "e2/operators.hpp"
@@ -31,6 +32,7 @@ void PrintUsage(const char* prog) {
         << "  verify   re-score a saved board from scratch\n"
         << "  bound    compute the stub-matching lower bound at the root\n"
         << "  rotbound upper bound on what rotation alone can reach for a placement\n"
+        << "  dissect         exact Hungarian reassignment over a library of dissections\n"
         << "  bench-subsolve  compare lower bounds on identical sub-board problems\n"
         << "  polish  --board B  run the exact operators on an existing board\n"
         << "  selftest correctness checks (matching, increments, bound)\n\n"
@@ -776,39 +778,220 @@ int CmdSelfTest(const Args& a) {
     std::cout << "engine: " << MatchingEngineName() << "\n";
     bool ok = true;
     const int trials = a.getInt("--trials", 40);
-    std::cout << "[1/6] matching vs brute force ... "; std::cout.flush();
+    std::cout << "[1/7] matching vs brute force ... "; std::cout.flush();
     ok &= SelfTestMatching(trials, 12, 999);
     std::cout << (ok ? "ok\n" : "FAILED\n");
     if (!ok) return 1;
 
     Puzzle pz = Puzzle::load(a.get("--pieces", "data/e2pieces.txt"));
-    std::cout << "[2/6] incremental scoring ... "; std::cout.flush();
+    std::cout << "[2/7] incremental scoring ... "; std::cout.flush();
     bool ok2 = SelfTestIncrements(pz);
     std::cout << (ok2 ? "ok\n" : "FAILED\n");
     ok &= ok2;
 
-    std::cout << "[3/6] stub bound admissibility ... "; std::cout.flush();
+    std::cout << "[3/7] stub bound admissibility ... "; std::cout.flush();
     bool ok3 = SelfTestBound(40, 4242);
     std::cout << (ok3 ? "ok\n" : "FAILED\n");
     ok &= ok3;
 
-    std::cout << "[4/6] coarse moves (block rotate/swap, dominoes) ... "; std::cout.flush();
+    std::cout << "[4/7] coarse moves (block rotate/swap, dominoes) ... "; std::cout.flush();
     bool ok4 = SelfTestCoarse(pz, std::max(2, trials / 8), 31337);
     std::cout << (ok4 ? "ok\n" : "FAILED\n");
     ok &= ok4;
 
-    std::cout << "[5/6] rotation strip DP and upper bound ... "; std::cout.flush();
+    std::cout << "[5/7] rotation strip DP and upper bound ... "; std::cout.flush();
     bool ok5 = SelfTestRotation(pz, std::max(3, trials / 4), 5150);
     std::cout << (ok5 ? "ok\n" : "FAILED\n");
     ok &= ok5;
 
-    std::cout << "[6/6] sub-board branch and bound vs brute force ... "; std::cout.flush();
+    std::cout << "[6/7] sub-board branch and bound vs brute force ... "; std::cout.flush();
     bool ok6 = SelfTestSubSolve(pz, 2, 777);
     std::cout << (ok6 ? "ok\n" : "FAILED\n");
     ok &= ok6;
 
+    std::cout << "[7/7] dissection reassignment exactness ... "; std::cout.flush();
+    bool ok7 = SelfTestDissect(pz, 8, 2024);
+    std::cout << (ok7 ? "ok\n" : "FAILED\n");
+    ok &= ok7;
+
     std::cout << (ok ? "\nall self-tests passed\n" : "\nSELF-TESTS FAILED\n");
     return ok ? 0 : 1;
+}
+
+
+// ------------------------------------------------------------------- dissect
+// Task A.  Precompute a large library of different dissections of the board
+// (domino tilings, L/Z mixed tilings, whole rows, whole columns, squares), then
+// for each one pick a set of pieces no two of which are neighbours, freeze the
+// rest, and reassign the chosen set to the best cells with the best rotations by
+// an exact -- bipartite, so Hungarian -- assignment.  Sweep the whole library
+// over and over until a full sweep yields no further improvement.
+int CmdDissect(const Args& a) {
+    Puzzle pz = Puzzle::load(a.get("--pieces", "data/e2pieces.txt"),
+                             a.getInt("--w", 0), a.getInt("--h", 0));
+    Board b(pz);
+    const std::string boardPath = a.get("--board", "");
+    if (boardPath.empty() || a.has("--random")) {
+        std::mt19937 r0((unsigned)a.getInt("--seed", 1));
+        b.randomizeStructured(r0);
+    } else {
+        std::vector<int> pc, rt;
+        if (!LoadBoard(boardPath, pc, rt)) { std::cerr << "cannot read " << boardPath << "\n"; return 1; }
+        b.load(pc, rt);
+    }
+
+    const int nDomino = a.getInt("--dissections", 1000);
+    const int nMixed = a.getInt("--mixed", 40);
+    const int maxGroups = a.getInt("--max-groups", 64);
+    const int maxRounds = a.getInt("--rounds", 200);
+    const double timeLimit = a.getDouble("--time", 300.0);
+    const int seed = a.getInt("--seed", 1);
+    const bool strips = !a.has("--no-strips");
+    const bool squares = !a.has("--no-squares");
+    const bool verbose = a.has("--verbose");
+
+    const auto T0 = std::chrono::steady_clock::now();
+    auto elapsed = [&]() {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - T0).count();
+    };
+
+    // ---- the library.  Building the tilings up front is the point of the
+    // exercise: each is a different pattern, so each exposes a different set of
+    // independent groups to the exact assignment.
+    std::vector<std::string> names;
+    std::vector<Dissection> lib;
+    for (int i = 0; i < nDomino; ++i) {
+        lib.push_back(MakeDominoDissection(pz, (uint64_t)seed * 1000003ull + (uint64_t)i + 1));
+        names.push_back("domino#" + std::to_string(i));
+    }
+    for (int i = 0; i < nMixed; ++i) {
+        lib.push_back(MakeMixedDissection(pz, (uint64_t)seed * 7919ull + (uint64_t)i + 1));
+        names.push_back("mixed#" + std::to_string(i));
+    }
+    if (strips) {
+        lib.push_back(MakeRowStripDissection(pz));     names.push_back("rows");
+        lib.push_back(MakeColumnStripDissection(pz));  names.push_back("columns");
+    }
+    if (squares) {
+        for (int ph = 0; ph < 2; ++ph)
+            for (int pc2 = 0; pc2 < 2; ++pc2) {
+                lib.push_back(MakeSquareDissection(pz, 2, ph, pc2));
+                names.push_back("squares2@" + std::to_string(ph) + "," + std::to_string(pc2));
+            }
+        lib.push_back(MakeSquareDissection(pz, 4));    names.push_back("squares4");
+    }
+    std::cout << "library: " << lib.size() << " dissections built in " << elapsed() << " s\n";
+
+    ReassignParams pr;
+    pr.maxGroups = maxGroups;
+    pr.acceptOnlyImproving = true;
+    pr.shuffle = true;
+
+    const int N = (int)lib.size();
+    std::vector<int> order(N);
+    for (int i = 0; i < N; ++i) order[i] = i;
+    std::mt19937 rng((unsigned)(seed * 2654435761u + 1u));
+
+    // --stats: a dry run over the library that reports, per dissection, the size
+    // of the independent set and the gain the Hungarian PROVES available -- taken
+    // on a scratch copy, so the board is not modified.  This separates "the
+    // neighbourhood has nothing to offer" from "the operator is broken".
+    if (a.has("--stats")) {
+        const int K = a.getInt("--stats-n", 40);
+        std::cout << "\n--stats: one reassignment per dissection on a copy of the board\n";
+        std::cout << "  dissection            |S|   predicted   measured\n";
+        long long best = 0, sum = 0, sumS = 0;
+        int nz = 0;
+        for (int k = 0; k < std::min(K, N); ++k) {
+            Board c(pz);
+            c.load(b.pc, b.rt);
+            ReassignParams sp = pr;
+            sp.acceptOnlyImproving = false;
+            ReassignResult r = DissectionReassign(c, lib[k], sp, (uint64_t)seed * 31ull + (uint64_t)k);
+            if (!r.ran) continue;
+            sum += r.predicted;
+            sumS += r.groups;
+            if (r.predicted > 0) ++nz;
+            best = std::max(best, r.predicted);
+            std::cout << "  " << std::left << std::setw(20) << names[k] << std::right
+                      << std::setw(4) << r.groups << std::setw(12) << r.predicted
+                      << std::setw(11) << r.actualGain << "\n";
+        }
+        std::cout << "  mean |S| " << (K ? (double)sumS / K : 0.0) << ", dissections with a"
+                  << " strictly positive predicted gain: " << nz << "/" << K
+                  << ", mean gain " << (K ? (double)sum / K : 0.0) << ", best " << best << "\n";
+        return 0;
+    }
+
+    const long long startCost = b.cost;
+    long long bestCost = b.cost;
+    std::vector<int> bestPc = b.pc, bestRt = b.rt;
+    int sweep = 0, totalRounds = 0, totalImproved = 0, bestIdx = -1;
+    const int kick = a.getInt("--kick", 0);
+    int kicks = 0;
+
+    while (elapsed() < timeLimit) {
+        std::shuffle(order.begin(), order.end(), rng);
+        long long sweepGain = 0;
+        ++sweep;
+        for (int k = 0; k < N && elapsed() < timeLimit; ++k) {
+            const int di = order[k];
+            ReassignRepeatResult r = DissectionReassignRepeat(
+                b, lib[di], pr, (uint64_t)seed + (uint64_t)sweep * 104729ull + (uint64_t)k,
+                maxRounds);
+            totalRounds += r.rounds;
+            totalImproved += r.improvedRounds;
+            if (r.totalGain > 0) {
+                sweepGain += r.totalGain;
+                if (b.cost < bestCost) {
+                    bestCost = b.cost;
+                    bestPc = b.pc;
+                    bestRt = b.rt;
+                    bestIdx = di;
+                }
+                if (verbose)
+                    std::cout << "  sweep " << sweep << " " << names[di] << ": +" << r.totalGain
+                              << " in " << r.rounds << " rounds -> cost " << b.cost << "\n";
+            }
+        }
+        std::cout << "sweep " << sweep << ": gain " << sweepGain << ", cost " << b.cost
+                  << " (" << (480 - b.cost / 2) << "/480)  t=" << elapsed() << "s\n";
+        if (sweepGain <= 0) {
+            std::cout << "converged: full sweep with no improvement\n";
+            if (kick <= 0) break;
+            // ---- iterated local search.  A converged board is a fixed point of
+            // EVERY reassignment neighbourhood (that is exactly what --stats
+            // shows), so a pure sweep can never escape it.  Kick it with a few
+            // random transpositions, re-converge with the exact operator, and
+            // keep the result only if it is better.  This is what turns the
+            // exact assignment from a one-shot polish into an optimiser.
+            std::uniform_int_distribution<int> pick(0, pz.ncells - 1);
+            for (int t = 0; t < kick; ++t) {
+                const int x = pick(rng), y = pick(rng);
+                std::swap(b.pc[x], b.pc[y]);
+                std::swap(b.rt[x], b.rt[y]);
+                if (rng() % 2) b.rt[x] = rng() & 3;
+            }
+            b.rebuild();
+            ++kicks;
+            std::cout << "kick " << kicks << " (" << kick << " swaps) -> cost " << b.cost
+                      << ", re-converging\n";
+            continue;
+        }
+    }
+
+    b.load(bestPc, bestRt);
+    std::cout << "start cost " << startCost << " -> best cost " << bestCost
+              << "  (improvement " << (startCost - bestCost) << ")\n";
+    std::cout << "score: " << (480 - bestCost / 2) << "/480   (before: "
+              << (480 - startCost / 2) << "/480)\n";
+    std::cout << "sweeps " << sweep << ", assignment rounds " << totalRounds
+              << ", improving " << totalImproved << ", kicks " << kicks
+              << ", time " << elapsed() << " s\n";
+    if (bestIdx >= 0) std::cout << "last improving dissection: " << names[bestIdx] << "\n";
+    const std::string out = a.get("--out", "");
+    if (!out.empty()) { SaveBoard(out, pz, b.pc, b.rt); std::cout << "wrote " << out << "\n"; }
+    return 0;
 }
 
 }  // namespace
@@ -823,6 +1006,7 @@ int main(int argc, char** argv) {
         if (cmd == "bound") return CmdBound(args);
         if (cmd == "rotbound") return CmdRotBound(args);
         if (cmd == "bench-subsolve") return CmdBenchSubSolve(args);
+        if (cmd == "dissect") return CmdDissect(args);
         if (cmd == "polish") return CmdPolish(args);
         if (cmd == "selftest") return CmdSelfTest(args);
         PrintUsage(argv[0]);

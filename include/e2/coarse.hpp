@@ -87,6 +87,13 @@ struct Block {
     std::vector<std::vector<int>> dst;     // [q][i] -> index that the content of i moves to
     std::vector<std::vector<int>> inv;     // [q][j] -> index whose content lands on j
     std::vector<int> inc;                  // [q]   -> added to every piece's rotation
+    // Whether rotation q leaves the shape on the SAME set of cells.  True for
+    // all four turns of a square; for a 1x2 domino only 0 and 2 qualify, because
+    // a quarter turn carries a horizontal domino onto a vertical pair of cells
+    // that belongs to a different domino.  In-place operators (block rotate)
+    // must skip the others; operators that move a group to a new location
+    // (dissect.hpp) are free to use all four.
+    std::vector<char> rotInPlace;
 };
 
 // A whole-board dissection into super-tiles.
