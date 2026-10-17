@@ -103,12 +103,14 @@ BlossomSwapResult BlossomSwapPass(Board& b, const BlossomSwapParams& pr, Matchin
     //    are not additive and the matching has been optimising a surrogate.
     std::vector<char> blocked(pz.ncells, 0);
     std::vector<std::pair<int, int>> applyList;  // indices into cand
+    long long predictedApplied = 0;   // gain of what SURVIVES the filter
     if (pr.filterAdjacent) {
         for (const auto& arr : chosen) {
             const int i = arr[1], j = arr[2];
             const int u = cand[i], v = cand[j];
             if (blocked[u] || blocked[v]) continue;
             applyList.emplace_back(u, v);
+            predictedApplied += arr[0];
             blocked[u] = blocked[v] = 1;
             for (int s = 0; s < 4; ++s) {
                 if (pz.neigh[u * 4 + s] >= 0) blocked[pz.neigh[u * 4 + s]] = 1;
@@ -116,8 +118,17 @@ BlossomSwapResult BlossomSwapPass(Board& b, const BlossomSwapParams& pr, Matchin
             }
         }
     } else {
-        for (const auto& arr : chosen) applyList.emplace_back(cand[arr[1]], cand[arr[2]]);
+        for (const auto& arr : chosen) {
+            applyList.emplace_back(cand[arr[1]], cand[arr[2]]);
+            predictedApplied += arr[0];
+        }
     }
+    // Report the gain of the pairs actually applied, not the weight of the whole
+    // matching.  The latter counts every pair Blossom picked, including the ones
+    // the adjacency filter then drops because their gains do not add up, and
+    // that made "predicted" look roughly 1.8x larger than "measured" for no
+    // algorithmic reason at all.
+    res.predictedGain = (int)predictedApplied;
     if (applyList.empty()) { res.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); return res; }
 
     // -- apply, measure the true delta, revert if it did not help.
