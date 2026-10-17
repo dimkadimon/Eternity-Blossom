@@ -979,6 +979,18 @@ int CmdDissect(const Args& a) {
     std::vector<int> bestPc = b.pc, bestRt = b.rt;
     int sweep = 0, totalRounds = 0, totalImproved = 0, bestIdx = -1;
     const int kick = a.getInt("--kick", 0);
+    // ---- non-bipartite swap matching instead of bipartite assignment
+    const bool swapMode = a.has("--swap");
+    SwapMatchParams sp;
+    sp.maxCandidates = a.getInt("--swap-cands", 96);
+    sp.maxPairs = a.getInt("--swap-pairs", 64);
+    sp.iterative = !a.has("--swap-single");
+    sp.acceptOnlyImproving = true;
+    long long blossomCalls = 0, blossomEdges = 0, candTotal = 0, offeredTotal = 0,
+              appliedTotal = 0;
+    if (swapMode)
+        std::cout << "non-bipartite swap matching (Blossom on the complement graph), "
+                  << (sp.iterative ? "iterative" : "single solve") << "\n";
     int kicks = 0;
 
     while (elapsed() < timeLimit) {
@@ -987,13 +999,32 @@ int CmdDissect(const Args& a) {
         ++sweep;
         for (int k = 0; k < N && elapsed() < timeLimit; ++k) {
             const int di = order[k];
-            ReassignRepeatResult r = DissectionReassignRepeat(
-                b, lib[di], pr, (uint64_t)seed + (uint64_t)sweep * 104729ull + (uint64_t)k,
-                maxRounds);
-            totalRounds += r.rounds;
-            totalImproved += r.improvedRounds;
-            if (r.totalGain > 0) {
-                sweepGain += r.totalGain;
+            long long g = 0;
+            int rounds = 1, impr = 0;
+            if (swapMode) {
+                // ---- the NON-BIPARTITE operator: Blossom picks a set of
+                // disjoint group swaps on the complement graph
+                SwapMatchResult r = SwapMatchPass(b, lib[di], sp);
+                blossomCalls += r.blossomCalls;
+                blossomEdges += r.blossomEdges;
+                candTotal += r.candidates;
+                offeredTotal += r.pairsOffered;
+                appliedTotal += r.pairsApplied;
+                g = r.actualGain;
+                impr = r.improved ? 1 : 0;
+                if (!r.error.empty()) { std::cerr << "matching: " << r.error << "\n"; return 1; }
+            } else {
+                ReassignRepeatResult r = DissectionReassignRepeat(
+                    b, lib[di], pr, (uint64_t)seed + (uint64_t)sweep * 104729ull + (uint64_t)k,
+                    maxRounds);
+                g = r.totalGain;
+                rounds = r.rounds;
+                impr = r.improvedRounds;
+            }
+            totalRounds += rounds;
+            totalImproved += impr;
+            if (g > 0) {
+                sweepGain += g;
                 if (b.cost < bestCost) {
                     bestCost = b.cost;
                     bestPc = b.pc;
@@ -1001,8 +1032,8 @@ int CmdDissect(const Args& a) {
                     bestIdx = di;
                 }
                 if (verbose)
-                    std::cout << "  sweep " << sweep << " " << names[di] << ": +" << r.totalGain
-                              << " in " << r.rounds << " rounds -> cost " << b.cost << "\n";
+                    std::cout << "  sweep " << sweep << " " << names[di] << ": +" << g
+                              << " -> cost " << b.cost << "\n";
             }
         }
         std::cout << "sweep " << sweep << ": gain " << sweepGain << ", cost " << b.cost
@@ -1039,6 +1070,12 @@ int CmdDissect(const Args& a) {
     std::cout << "sweeps " << sweep << ", assignment rounds " << totalRounds
               << ", improving " << totalImproved << ", kicks " << kicks
               << ", time " << elapsed() << " s\n";
+    if (swapMode)
+        std::cout << "blossom calls " << blossomCalls << ", avg edges "
+                  << (blossomCalls ? (double)blossomEdges / blossomCalls : 0.0)
+                  << ", avg candidates " << (N ? (double)candTotal / N : 0.0)
+                  << ", pairs offered " << offeredTotal << ", pairs applied " << appliedTotal
+                  << "\n";
     if (bestIdx >= 0) std::cout << "last improving dissection: " << names[bestIdx] << "\n";
     const std::string out = a.get("--out", "");
     if (!out.empty()) { SaveBoard(out, pz, b.pc, b.rt); std::cout << "wrote " << out << "\n"; }

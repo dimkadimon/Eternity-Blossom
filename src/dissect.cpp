@@ -11,6 +11,7 @@
 #include <random>
 
 #include "e2/assign.hpp"
+#include "e2/matching.hpp"
 
 
 namespace e2 {
@@ -587,6 +588,168 @@ long long SlotCostFull(const Board& b, const Dissection& d, int gi, int sj,
     if (outPerm) *outPerm = bestPerm;
     if (outRot) *outRot = bestRot;
     return best;
+}
+
+// ------------------------------------------------------- the NON-BIPARTITE move
+SwapMatchResult SwapMatchPass(Board& b, const Dissection& d, const SwapMatchParams& pr,
+                              MatchingStats* ms) {
+    SwapMatchResult res;
+    const auto t0 = std::chrono::steady_clock::now();
+    const int ng = (int)d.groups.size();
+
+    // ---- candidates: groups whose own cost is not already zero
+    std::vector<int> cand;
+    std::vector<long long> curCost(ng, 0);
+    for (int i = 0; i < ng; ++i) {
+        const long long c = CurrentGroupCost(b, d, i);
+        curCost[i] = c;
+        if (c > 0) cand.push_back(i);
+    }
+    if ((int)cand.size() > pr.maxCandidates) {
+        std::stable_sort(cand.begin(), cand.end(),
+                         [&](int x, int y) { return curCost[x] > curCost[y]; });
+        cand.resize(pr.maxCandidates);
+        std::sort(cand.begin(), cand.end());
+    }
+    const int k = (int)cand.size();
+    res.candidates = k;
+    if (k < 2) {
+        res.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        return res;
+    }
+    res.ran = true;
+
+    // ---- the full placement cost of every ordered pair, plus the arrangement
+    //      that achieves it.  cost[i][j] = best cost of putting i's pieces into
+    //      j's cells, over all 4^n * n! placements.
+    std::vector<std::vector<long long>> cost((size_t)k, std::vector<long long>(k, 0));
+    std::vector<std::vector<std::vector<int>>> perm(
+        (size_t)k, std::vector<std::vector<int>>(k));
+    std::vector<std::vector<std::vector<int>>> rot(
+        (size_t)k, std::vector<std::vector<int>>(k));
+    for (int i = 0; i < k; ++i) {
+        for (int j = 0; j < k; ++j) {
+            if (i == j) { cost[i][j] = curCost[cand[i]]; continue; }
+            if (d.adjacent(cand[i], cand[j])) continue;
+            std::vector<int> pm, rt;
+            cost[i][j] = SlotCostFull(b, d, cand[i], cand[j], &pm, &rt);
+            perm[i][j] = pm;
+            rot[i][j] = rt;
+        }
+    }
+
+    // ---- the swap graph: complement of the group adjacency graph, weight = gain
+    auto gainOf = [&](int i, int j) {
+        if (d.adjacent(cand[i], cand[j])) return (long long)-1;
+        return curCost[cand[i]] + curCost[cand[j]] - cost[j][i] - cost[i][j];
+    };
+    std::vector<std::tuple<int, int, int>> edges;
+    for (int i = 0; i < k; ++i)
+        for (int j = i + 1; j < k; ++j) {
+            const long long g = gainOf(i, j);
+            if (g > 0) edges.emplace_back(i, j, (int)g);
+        }
+    res.pairsOffered = (int)edges.size();
+    if (edges.empty()) {
+        res.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        return res;
+    }
+
+    // ---- Blossom.  Iteratively: solve, take the best pair of the matching,
+    //      delete it and its neighbours, re-solve on what is left.  A single
+    //      solve followed by a greedy filter throws away pairs that touch; this
+    //      keeps finding more.
+    std::vector<std::pair<int, int>> applyList;
+    std::vector<char> dead(k, 0);
+    while (true) {
+        std::vector<std::tuple<int, int, int>> live;
+        for (auto& e : edges)
+            if (!dead[std::get<0>(e)] && !dead[std::get<1>(e)]) live.push_back(e);
+        if (live.empty()) break;
+
+        std::vector<std::pair<int, int>> pairs;
+        long long w = 0;
+        ++res.blossomCalls;
+        res.blossomVertices += k;
+        res.blossomEdges += (long long)live.size();
+        if (!MaxWeightMatching(k, live, pairs, w, ms)) { res.error = "matching failed"; break; }
+        if (pairs.empty()) break;
+
+        // take the heaviest pair in this matching
+        int bi = -1, bj = -1, bw = -1;
+        for (auto& p : pairs) {
+            const long long g = gainOf(p.first, p.second);
+            if ((int)g > bw) { bw = (int)g; bi = p.first; bj = p.second; }
+        }
+        if (bi < 0) break;
+        applyList.push_back({bi, bj});
+        res.pairsChosen++;
+        if (!pr.iterative) {
+            // keep the rest of this matching only if they do not touch anything
+            for (auto& p : pairs) {
+                if (p.first == bi && p.second == bj) continue;
+                bool clash = false;
+                for (auto& q : applyList)
+                    if (d.adjacent(cand[q.first], cand[p.first]) ||
+                        d.adjacent(cand[q.first], cand[p.second]) ||
+                        d.adjacent(cand[q.second], cand[p.first]) ||
+                        d.adjacent(cand[q.second], cand[p.second])) { clash = true; break; }
+                if (!clash) applyList.push_back(p);
+            }
+            break;
+        }
+        // delete the pair and every group touching it
+        dead[bi] = dead[bj] = 1;
+        for (int t = 0; t < k; ++t)
+            if (!dead[t] && (d.adjacent(cand[t], cand[bi]) || d.adjacent(cand[t], cand[bj])))
+                dead[t] = 1;
+    }
+    if ((int)applyList.size() > pr.maxPairs) applyList.resize(pr.maxPairs);
+    if (applyList.empty()) {
+        res.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        return res;
+    }
+
+    // ---- apply
+    const long long before = b.cost;
+    const std::vector<int> savedPc = b.pc, savedRt = b.rt;
+    std::vector<int> np = b.pc, nr = b.rt;
+    long long predicted = 0;
+    for (auto& p : applyList) {
+        const int i = p.first, j = p.second;
+        predicted += gainOf(i, j);
+        const Group& gi = d.groups[cand[i]];
+        const Group& gj = d.groups[cand[j]];
+        // i's cells receive j's pieces, arranged per SlotCostFull(j -> i)
+        for (size_t t = 0; t < gi.cells.size(); ++t) {
+            const int from = gj.cells[perm[j][i][t]];
+            np[gi.cells[t]] = b.pc[from];
+            nr[gi.cells[t]] = (b.rt[from] + rot[j][i][t]) & 3;
+        }
+        // j's cells receive i's pieces, arranged per SlotCostFull(i -> j)
+        for (size_t t = 0; t < gj.cells.size(); ++t) {
+            const int from = gi.cells[perm[i][j][t]];
+            np[gj.cells[t]] = b.pc[from];
+            nr[gj.cells[t]] = (b.rt[from] + rot[i][j][t]) & 3;
+        }
+    }
+    // only write the cells that actually move
+    for (auto& p : applyList) {
+        for (int c : d.groups[cand[p.first]].cells) { b.pc[c] = np[c]; b.rt[c] = nr[c]; }
+        for (int c : d.groups[cand[p.second]].cells) { b.pc[c] = np[c]; b.rt[c] = nr[c]; }
+    }
+    b.rebuild();
+    res.pairsApplied = (int)applyList.size();
+    res.predicted = predicted;
+    res.actualGain = before - b.cost;
+    if (pr.acceptOnlyImproving && b.cost >= before) {
+        b.load(savedPc, savedRt);
+        res.actualGain = 0;
+    } else {
+        res.improved = res.actualGain > 0;
+    }
+    res.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    return res;
 }
 
 ReassignResult DissectionReassign(Board& b, const Dissection& d, const ReassignParams& pr,

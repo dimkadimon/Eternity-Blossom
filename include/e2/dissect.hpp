@@ -54,6 +54,8 @@
 
 namespace e2 {
 
+struct MatchingStats;   // defined in e2/matching.hpp
+
 // Rotate a set of cell offsets by q quarter turns clockwise and translate the
 // result back to the origin; `dst[i]` is the index (in the canonical row-major
 // order of the rotated shape) that source i moves to.  Always succeeds -- see
@@ -181,6 +183,48 @@ long long SlotCostFull(const Board& b, const Dissection& d, int gi, int sj,
 // independent set.
 ReassignResult DissectionReassign(Board& b, const Dissection& d, const ReassignParams& pr,
                                   uint64_t seed);
+
+// ------------------------------------------------------- the NON-BIPARTITE move
+// Reassigning an independent set is bipartite: contents on one side, slots on
+// the other, so Hungarian.  SWAPPING pairs of groups is not: we are choosing a
+// set of pairs out of ONE set of groups, and the pairs have to be disjoint, so
+// it is a MATCHING problem -- and the graph is the complement of the group
+// adjacency graph, which has triangles, so it needs Blossom.
+//
+// Conveniently the swap gain comes straight out of the same cost function:
+//      gain(i,j) = cur[i] + cur[j] - cost(j->i) - cost(i->j)
+// because swapping puts j's pieces into i's cells and i's pieces into j's, and
+// the two halves are independent of each other.
+//
+// Two reasons to want this even though assignment is the more general move:
+//   * no independent set has to be chosen up front -- Blossom picks the pairs
+//     itself, from all pairs of candidates;
+//   * it is a much smaller, more local move, which sits better inside a
+//     stochastic search than permuting 45 groups at once.
+struct SwapMatchParams {
+    int maxCandidates = 96;    // cap on candidate groups (cost is quadratic)
+    int maxPairs = 64;
+    bool acceptOnlyImproving = true;
+    // Re-run Blossom after each pick, deleting the chosen pair AND its
+    // neighbours.  A single Blossom run returns pairs that may touch each other,
+    // and a greedy filter then throws them away; re-solving on what is left
+    // recovers pairs the first run could not see.
+    bool iterative = true;
+    bool verbose = false;
+};
+
+struct SwapMatchResult {
+    bool ran = false, improved = false;
+    int candidates = 0, pairsOffered = 0, pairsChosen = 0, pairsApplied = 0;
+    long long predicted = 0, actualGain = 0;
+    int blossomCalls = 0;
+    long long blossomVertices = 0, blossomEdges = 0;
+    double seconds = 0.0;
+    std::string error;
+};
+
+SwapMatchResult SwapMatchPass(Board& b, const Dissection& d, const SwapMatchParams& pr,
+                              MatchingStats* ms = nullptr);
 
 // Repeatedly reassign on `d` until no further improvement (or `maxRounds`).
 struct ReassignRepeatResult {

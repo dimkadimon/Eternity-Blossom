@@ -591,6 +591,85 @@ bool SelfTestDissect(const Puzzle& pz, int trials, uint64_t seed) {
         }
     }
 
+    // ---- (2c) the NON-BIPARTITE swap operator is exact, and its graph really
+    // is non-bipartite.
+    {
+        for (int t = 0; t < std::max(3, trials / 2); ++t) {
+            RandomiseBoard(b, rng);
+            Dissection dd = MakeDominoDissection(pz, seed + 31337u + (unsigned)t);
+            SwapMatchParams sm;
+            sm.acceptOnlyImproving = false;   // so the PREDICTION is testable
+            const long long before = b.cost;
+            SwapMatchResult r = SwapMatchPass(b, dd, sm);
+            if (!r.ran) continue;
+            if (!r.error.empty()) {
+                std::cerr << "  dissect: SwapMatchPass: " << r.error << "\n";
+                return false;
+            }
+            if (r.actualGain != before - b.cost) {
+                std::cerr << "  dissect: swap match gain " << r.actualGain << " != measured "
+                          << (before - b.cost) << "\n";
+                return false;
+            }
+            // the board is still a legal permutation
+            std::vector<int> seen(pz.ncells, 0);
+            for (int c = 0; c < pz.ncells; ++c) seen[b.pc[c]]++;
+            for (int c = 0; c < pz.ncells; ++c)
+                if (seen[c] != 1) {
+                    std::cerr << "  dissect: swap match broke the permutation\n";
+                    return false;
+                }
+            // applied pairs must be pairwise non-adjacent (an INDUCED matching),
+            // otherwise the gains could not have added up
+            if (r.actualGain != r.predicted && r.pairsApplied > 0) {
+                std::cerr << "  dissect: swap match predicted " << r.predicted
+                          << " != measured " << r.actualGain << " over " << r.pairsApplied
+                          << " pairs -- the pairs must form an induced matching\n";
+                return false;
+            }
+        }
+    }
+    {
+        // The swap graph is the complement of the group adjacency graph.  On a
+        // domino tiling three mutually non-adjacent dominoes are easy to find,
+        // so it contains triangles and Blossom is genuinely required.
+        Dissection dd = MakeDominoDissection(pz, seed + 5u);
+        const int ng = (int)dd.groups.size();
+        std::vector<std::vector<char>> nb(ng, std::vector<char>(ng, 0));
+        for (int i = 0; i < ng; ++i)
+            for (int j : dd.adj[i]) nb[i][j] = nb[j][i] = 1;
+        int tris = 0, odd = 0;
+        for (int i = 0; i < ng && tris < 1; ++i)
+            for (int j = i + 1; j < ng && tris < 1; ++j) {
+                if (nb[i][j]) continue;
+                for (int k = j + 1; k < ng; ++k)
+                    if (!nb[i][k] && !nb[j][k]) { ++tris; ++odd; break; }
+            }
+        if (tris == 0) {
+            std::cerr << "  dissect: expected the domino swap graph to contain a triangle\n";
+            return false;
+        }
+        // and a direct 2-colouring of that complement graph must fail
+        std::vector<int> col(ng, -1);
+        bool bip = true;
+        for (int st = 0; st < ng && bip; ++st) {
+            if (col[st] >= 0) continue;
+            col[st] = 0;
+            std::vector<int> q{st};
+            for (size_t h = 0; h < q.size(); ++h)
+                for (int u = 0; u < ng; ++u) {
+                    if (u == q[h] || nb[q[h]][u]) continue;
+                    if (col[u] < 0) { col[u] = col[q[h]] ^ 1; q.push_back(u); }
+                    else if (col[u] == col[q[h]]) { bip = false; break; }
+                }
+        }
+        if (bip) {
+            std::cerr << "  dissect: the domino swap graph came out bipartite;\n"
+                      << "           Blossom would not be needed\n";
+            return false;
+        }
+    }
+
     // ---- (3) the assignment solver is OPTIMAL, not merely feasible.
     // This is the load-bearing check behind every "predicted == 0" report: the
     // claim that a converged board admits no improving reassignment is only as
