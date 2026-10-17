@@ -228,3 +228,33 @@ end to end on a 2x3 window with real numbers: the original board, every swap gai
 matching graph with all its weights, the two triangles that make it non-bipartite, why
 Hungarian cannot be used, Blossom's answer verified against brute force, and the final
 board. Regenerate the numbers with `./build/demo-2x3 --random`.
+
+## The strong reassignment move: all 4^n * n! placements
+
+`./build/eternity-blossom dissect --random --dissections 400 --full`
+
+Instead of the 4 rigid quarter-turns, cost every (group, slot) pair by brute force over
+all n! piece-to-cell assignments times all 4^n independent rotations: 32 placements for a
+domino, 384 for a tromino, 6144 for a tetromino. Still bipartite, so still Hungarian.
+
+Two consequences: a group's INTERNAL edges now change and must be costed, and a group no
+longer has to match a slot's shape, only its size.
+
+From an identical random start, run alone to convergence:
+
+| dissection | placements/pair | score |
+|---|---|---|
+| dominoes, rigid rotation | 4 | 292 |
+| **dominoes, full** | **32** | **346** |
+| trominoes, full | 384 | 327 |
+| tetrominoes, full | 6144 | 311 |
+| 2x2 squares, full | 6144 | 273 |
+
+So the strong move is worth **+54 edges** over the rigid one -- but **bigger polyominoes
+are worse, not better**: pieces move in blocks of n, so one bad edge cannot be repaired
+without disturbing n-1 others. Finer atoms beat more coverage.
+
+On a board the searcher has already optimised it still finds exactly zero. Because the
+move is exact this can be made a strong certificate: of 668 groups across dominoes,
+trominoes and tetrominoes, **zero** can be improved even by rearranging within their own
+cells. Full write-up: [`experiments/FULLREARRANGE.md`](experiments/FULLREARRANGE.md).

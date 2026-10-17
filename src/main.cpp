@@ -841,6 +841,8 @@ int CmdDissect(const Args& a) {
     }
 
     const int nDomino = a.getInt("--dissections", 1000);
+    const int nTromino = a.getInt("--trominoes", 0);
+    const int nTetra = a.getInt("--tetrominoes", 0);
     const int nMixed = a.getInt("--mixed", 40);
     const int maxGroups = a.getInt("--max-groups", 64);
     const int maxRounds = a.getInt("--rounds", 200);
@@ -868,6 +870,14 @@ int CmdDissect(const Args& a) {
         lib.push_back(MakeMixedDissection(pz, (uint64_t)seed * 7919ull + (uint64_t)i + 1));
         names.push_back("mixed#" + std::to_string(i));
     }
+    for (int i = 0; i < nTromino; ++i) {
+        lib.push_back(MakeTrominoDissection(pz, (uint64_t)seed * 6151ull + (uint64_t)i + 1));
+        names.push_back("tromino#" + std::to_string(i));
+    }
+    for (int i = 0; i < nTetra; ++i) {
+        lib.push_back(MakeTetrominoDissection(pz, (uint64_t)seed * 12289ull + (uint64_t)i + 1));
+        names.push_back("tetromino#" + std::to_string(i));
+    }
     if (strips) {
         lib.push_back(MakeRowStripDissection(pz));     names.push_back("rows");
         lib.push_back(MakeColumnStripDissection(pz));  names.push_back("columns");
@@ -886,6 +896,16 @@ int CmdDissect(const Args& a) {
     pr.maxGroups = maxGroups;
     pr.acceptOnlyImproving = true;
     pr.shuffle = true;
+    // The strong move: for every (group, slot) pair, try all 4^n * n! ways of
+    // putting the group's pieces into the slot's cells -- any permutation, each
+    // piece spun freely.  n = 2 gives 32, n = 3 gives 384, n = 4 gives 6144.
+    pr.fullRearrange = a.has("--full");
+    pr.maxCells = a.getInt("--max-cells", 3);
+    pr.misTrials = a.getInt("--mis-trials", 1);
+    pr.misImprove = a.has("--mis-improve");
+    if (pr.fullRearrange)
+        std::cout << "full rearrangement: all 4^n * n! placements per pair, up to n="
+                  << pr.maxCells << "\n";
 
     const int N = (int)lib.size();
     std::vector<int> order(N);
@@ -920,6 +940,37 @@ int CmdDissect(const Args& a) {
         std::cout << "  mean |S| " << (K ? (double)sumS / K : 0.0) << ", dissections with a"
                   << " strictly positive predicted gain: " << nz << "/" << K
                   << ", mean gain " << (K ? (double)sum / K : 0.0) << ", best " << best << "\n";
+
+        // In-place rearrangement: for EVERY group (independence places no
+        // restriction here, since nothing moves between groups) is the current
+        // arrangement already the best of the 4^n * n!?  If the answer is yes
+        // for all of them, the board is at a very strong fixed point indeed.
+        if (a.has("--inplace")) {
+            const int L = a.getInt("--inplace-n", 5);
+            std::cout << "\n--inplace: rearrange each group within its OWN cells\n";
+            long long totalAvail = 0;
+            int nGroups = 0, nCan = 0;
+            for (int k = 0; k < std::min(L, N); ++k) {
+                const Dissection& d = lib[k];
+                long long avail = 0;
+                int can = 0, tot = 0;
+                for (int g = 0; g < (int)d.groups.size(); ++g) {
+                    const int n = (int)d.groups[g].cells.size();
+                    if (n < 2 || n > pr.maxCells) continue;
+                    ++tot;
+                    const long long now = CurrentGroupCost(b, d, g);
+                    const long long bestv = SlotCostFull(b, d, g, g);
+                    if (bestv < now) { ++can; avail += now - bestv; }
+                }
+                std::cout << "  " << std::left << std::setw(20) << names[k]
+                          << " groups " << std::setw(5) << tot
+                          << " improvable in place " << std::setw(5) << can
+                          << " total gain " << avail << "\n";
+                totalAvail += avail; nGroups += tot; nCan += can;
+            }
+            std::cout << "  TOTAL: " << nCan << "/" << nGroups << " groups improvable in place,"
+                      << " total gain " << totalAvail << "\n";
+        }
         return 0;
     }
 
