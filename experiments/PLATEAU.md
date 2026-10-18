@@ -1,124 +1,101 @@
-# Where the score plateaus, and what it would take to move it
+# Is 466 a plateau or a time limit?
 
-Numbers first, then what they mean.
+It is a plateau.  Four things we tried this session to break it, all negative,
+and one of them settles the question directly.
 
-## The plateau is real and it is not a throughput problem
+## The direct test: six times the annealing changes nothing
 
-| run | score |
+The pipeline runs 150 s of simulated annealing per board.  Run one board for
+900 s instead:
+
+| annealing time | score |
 |---|---|
-| 120 s, seed 21 | 437 |
-| 300 s, seed 21 | 441 |
-| **900 s, seed 21** | **438** |
+| 150 s | **463** |
+| 900 s | **462** |
 
-More time makes it *worse*, not better — that is noise around a plateau, not a
-converging curve. Best of 8 independent 120 s runs (seeds 21/33/47/58/61/74/89/95):
+Six times the compute, one edge *worse*.  Whatever is holding these boards at
+462–466 is the structure of the local optima, not the clock.  This is the single
+most useful negative in the session, because it rules out the obvious answer:
+you cannot buy a 467 by waiting.
+
+What is left is the spread between independent short runs, so the game is
+samples per hour, not seconds per run.
+
+## Region LNS: no gain
+
+`solve --region --region-size k` (destroy a patch of k cells, re-optimise it
+exactly with branch and bound) was wired into `CmdSolve` but had never been
+executed.  From the same board where plain annealing scores 464:
+
+| | score |
+|---|---|
+| plain SA | 464 |
+| `--region --region-size 6` | 463 |
+| `--region --region-size 8` | 464 |
+| `--region --region-size 12` | 464 |
+
+Exactly-optimal repair of an 8- or 12-cell patch does not move a board that is
+already this good.  See also `HOLEFILL.md`: exact repair only ever paid on
+boards that were much further from converged.
+
+## The colour-count bound is vacuous, but says something sharp
+
+Count piece-edge colours over all 256 pieces and pair them off, remembering that
+the 64 border slots must be grey:
 
 ```
-437 437 434 436 436 438 434 438      mean 436.3, sd 1.7
+total piece-edges 1024, 23 colours
+grey edges: 64  ->  the border needs exactly 64
+UPPER BOUND on matched internal edges: 480 / 480
 ```
 
-The spread is ±2. With that distribution, best-of-1000 runs reaches roughly 446.
-**Restarts cannot reach 470.**
+Every non-grey colour occurs an even number of times and every grey edge is
+accounted for by the border, so simple counting cannot rule out a perfect
+solution — the bound is useless for gauging headroom.  (As it must be: Eternity
+II was constructed to have a solution.)
 
-## Why: the placement moves are exhausted, and rotation is nearly maxed out
+But it does give one hard structural rule worth knowing: **there are exactly 64
+grey piece-edges for exactly 64 border slots, so a grey edge may never appear
+internally.**  Checked on the 466 board — its 14 mismatches involve colours
+2, 15, 12 (four each) and eight others, and **none** involves grey.  There is no
+free edge hiding there.
 
-From the 900 s run (1.22 billion iterations):
+## Best-of-N: the distribution, measured
 
-```
-assign passes : 6099 (improved 100)   measured gain 304     <- exhausted
-strip rot DP  : 24453 strips improved, gain 54502           <- the workhorse
-blossom gain  : predicted 1564900, measured 888444
-coarse swap   : 24399 passes (improved 177), 179 pairs applied
-perturbations : 1422
-```
-
-The rotation strip DP is doing essentially all the work. And rotation has a hard
-ceiling anyway:
+`~/EternityII_Solver/grind13.sh` samples Blackwood's DFS at break budget 13
+(120 s, convert, exact fill) and keeps the best.  Nine runs:
 
 ```
-$ eternity-blossom rotbound --board results/best_441.txt
-current 441   best rotation-only bound 444
+459 463 462 461 464 465 463 463 463     max 465
 ```
 
-So on our best board, **perfect rotation of the current placement would gain 3 edges**.
-Everything beyond 444 has to come from a better *placement* — and the placement moves
-(assign passes: 100 improvements in 900 s) have run dry.
+Pooled with the seven budget-13 boards from `BREAKBUDGET.md` (463 463 463 462
+464 466 466), that is **16 samples, mean 463.1, max 466, and 0 at 467 or
+better.**  At the observed spread (sd ≈ 1.5) a 467 is roughly a 2.3σ draw, about
+1 in 85 samples — a few hours of grinding at 30 samples/hour, and the tail
+estimate is fragile because 16 samples is not enough to know it.
 
-Neither exact operator finds anything on a converged board:
+## What every route actually produces
 
-| board | bipartite assignment | non-bipartite swap | kick+LNS (4/8/16) |
+| route | per sample | mean | max |
 |---|---|---|---|
-| 424/480 | 0 | 0 | — |
-| 441/480 | 0 | 0 | 441 (no improvement) |
+| 40 s DFS(b10) + fill + polish + 150 s SA | 190 s | 463.5 | 466 |
+| DFS(b13) + exact fill, no annealing | 120 s | 463.1 | 466 |
+| DFS(b13) + fill + polish + SA | 270 s | ~464 | 466 |
+| annealing for 900 s instead of 150 s | 900 s | — | 462 |
+| crossover over 16 of our own boards | — | — | 465 |
+| 64 disjoint holes + optimal fill (see `DISJOINT_HOLES.md`) | — | — | ~350 |
 
-## The 1.76x "gap" that was not a gap
+They all stop at 466.  Two structurally different 466 boards exist
+(`results/best_466.txt`, 8-hole lineage; `results/best_466_b13.txt`, 2-hole
+lineage), so the ceiling is not an artefact of one family of boards.
 
-The 900 s log showed `blossom gain: predicted 1564900, measured 888444`, which looks like
-the non-bipartite operator delivering 57% of what it promises. It was a **reporting
-bug**: `predictedGain` was the weight of the whole maximum-weight matching, recorded
-*before* the adjacency filter dropped the pairs whose gains do not add up because they
-touch. Those pairs were never applied.
+## Where that leaves it
 
-Summing only over the pairs that survive the filter:
-
-```
-blossom gain : predicted 111550, measured 111550
-```
-
-The non-bipartite swap operator is exact. Worth writing down because that ratio sent
-me looking for an algorithmic defect that did not exist.
-
-## More dissections: real, but it runs out too
-
-| dissections | score from random | notes |
-|---|---|---|
-| 400 | 346 (341–349) | |
-| 1000 | 348 | |
-| 3000 | **349 (341–361)** | best case 361 |
-| 10000 | 347 | converges after sweep 1; the library is too big to sweep |
-
-The operator converges after ~4 sweeps regardless of library size, so a bigger library
-mostly changes *which* local optimum you land in, not how deep you go.
-
-## What it would actually take to reach 470
-
-470 needs +29 over our 441. Given a distribution of 436 ± 2 at 120 s and 440 ± 4 at
-300 s, that is not a tuning problem.
-
-What the published 467–470 results have in common is **memetic / population search**:
-keep a population of boards, run local search on each, then *crossover* — take a region
-from one parent and repair it using the other — and keep the best. Plus months of CPU
-across many cores. Our solver is a single-trajectory SA/LAHC with a good exact
-repertoire, which is a different and much weaker regime.
-
-A concrete plan, in order of expected value:
-
-1. **Population + crossover.** The single biggest lever, and the one the literature
-   supports. Needs a board-difference representation, a crossover operator, and a
-   replacement policy.
-2. **Destroy-and-repair LNS at a larger scale** — carve out an 8×8 or 12×12 region and
-   rebuild it with the exact machinery, rather than only 2×3 sub-boards.
-3. **Diversification over restarts** — worth ~+6, not +29.
-
-Sandbox constraints matter here: 2 cores and no persistence across snapshots, so
-"throw months of CPU at it" is not available.
-
-## Where non-bipartite matching can still contribute
-
-Not for raising the score directly — the operators are not the bottleneck — but these
-are genuinely different uses of Blossom and worth having:
-
-* **T-joins for defect repair.** The cells incident to an odd number of mismatched
-  edges form an even-size set T. A minimum-weight T-join is the cheapest set of edges
-  along which to exchange pieces to make every cell even, and it reduces to
-  minimum-weight perfect matching on the complete graph over T — non-bipartite, so
-  Blossom. This is a structurally different move from anything currently implemented.
-* **2-factors for cyclic shifts.** Rotating pieces around a cycle is an E2 move nobody
-  here uses. A set of vertex-disjoint cycles covering some cells is a 2-factor, also
-  reducible to perfect matching, also non-bipartite.
-* **Odd-set certificates as cutting planes.** In the sub-board branch and bound, when
-  the stub bound is inconclusive, Blossom's dual yields violated blossom inequalities
-  that can tighten the bound. Roadmap item `DualCertificate()`.
-* **Matching to choose the perturbation.** Instead of kicking random cells, use a
-  matching to pick a set of pair swaps that are guaranteed non-interacting, so the
-  perturbation's cost is predictable.
+466 is one short of the lowest published result (467) and four short of the
+record (470), and the published 467–470 results all used memetic/population
+search with crossover.  Our crossover attempt converged in four generations on a
+population of 16 near-identical boards; the budget-13 generator now gives
+structurally different boards (2 holes instead of 8, breaks in different
+places), which is the diversity that attempt lacked.  That, or simply grinding
+samples, is what is left.
