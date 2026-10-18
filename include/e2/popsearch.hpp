@@ -56,6 +56,28 @@ struct PopulationParams {
     // it wrecks |R| scattered cells that had nothing to do with the transplant,
     // and that is what left children ~35 cost units worse than their parents.
     bool repairAssign = true;
+
+    // How to recombine two parents.
+    //   0 (rect)  -- transplant a rectangle of A into B.  The rectangle is a
+    //                contiguous block, so the edges inside it survive from A,
+    //                but the pieces it displaces have to be re-homed by
+    //                assignment, which scatters damage over unrelated cells.
+    //   1 (cycle) -- cycle crossover.  The transplanted cell set is a cycle of
+    //                a o b^-1, which is the piece-consistent choice: the pieces
+    //                A puts into the cycle are exactly the pieces B had there,
+    //                so NOTHING is displaced and no repair is needed at all.
+    //                The catch is that a cycle is scattered rather than
+    //                contiguous, so it preserves almost no internal edges.
+    int xoverMode = 0;
+
+    // Draw this many candidate recombinations and keep the cheapest child.  A
+    // single blind transplant is a random kick; scoring several turns the
+    // operator into something that at least prefers the least damaging
+    // transplant, and can occasionally find one that helps.
+    int xoverTries = 1;
+
+    int cycleMax = 24;             // reject cycles longer than this
+
     bool verbose = false;
     bool trace = false;            // print (seconds, best, mean) per generation
 
@@ -80,6 +102,11 @@ struct PopulationStats {
     long long children = 0;              // crossover children produced
     long long childCostSum = 0;          // their cost BEFORE local search
     long long childCostMin = (1LL << 60);
+    // The number that actually decides whether crossover is worth anything:
+    // children whose cost BEFORE any refinement is strictly better than BOTH
+    // parents.  If this stays at zero the operator is a perturbation, not a
+    // recombination, and no amount of local search will make it pay.
+    long long childBetter = 0;
     double initSeconds = 0.0;
     double breedSeconds = 0.0;
     double seconds = 0.0;
@@ -110,5 +137,26 @@ bool CrossoverRegion(const Puzzle& pz,
                      int r0, int c0, int h, int w,
                      std::vector<int>& outPc, std::vector<int>& outRt,
                      const Board* ctx = nullptr, bool repairAssign = true);
+
+// Cycle crossover -- the piece-consistent recombination.
+//
+// A rectangle transplant is NOT piece-consistent: the set of pieces A puts into
+// the rectangle differs from the set B had there, so pieces are displaced and
+// have to be re-homed, and that re-homing is what wrecks unrelated cells.
+//
+// The sets that ARE consistent are exactly the unions of cycles of
+// sigma = a o b^-1 (cell -> the cell where B keeps the piece A put there),
+// because on a cycle {a(c)} and {b(c)} are the same set of pieces.  So take the
+// child to be B everywhere except on one cycle of sigma, where it is A --
+// including A's rotations -- and every piece is still used exactly once, with
+// no displaced pieces and no repair step whatsoever.
+//
+// Returns false if the cycle came out longer than maxCells (in which case the
+// caller should just draw another one).
+bool CrossoverCycle(const Puzzle& pz,
+                    const std::vector<int>& pcA, const std::vector<int>& rtA,
+                    const std::vector<int>& pcB, const std::vector<int>& rtB,
+                    std::vector<int>& outPc, std::vector<int>& outRt,
+                    std::mt19937& rng, int maxCells);
 
 }  // namespace e2

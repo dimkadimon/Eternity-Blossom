@@ -1168,6 +1168,9 @@ int CmdPop(const Args& a) {
     pp.breedT1 = a.getDouble("--breed-t1", 0.05);
     pp.useCrossover = !a.has("--no-crossover");
     pp.repairAssign = !a.has("--no-repair-assign");
+    pp.xoverMode = (a.get("--xover", "rect") == "cycle") ? 1 : 0;
+    pp.xoverTries = a.getInt("--xover-tries", 1);
+    pp.cycleMax = a.getInt("--cycle-max", 24);
     pp.verbose = a.has("--verbose");
     pp.trace = a.has("--trace");
 
@@ -1231,6 +1234,8 @@ int CmdPop(const Args& a) {
                   << (int)(r.stats.childCostSum / r.stats.children)
                   << "  best " << r.stats.childCostMin
                   << "   (best parent " << (int)r.stats.bestCost << ")" << "\n";
+    std::cout << "children better than BOTH parents, before refinement: "
+              << r.stats.childBetter << " / " << r.stats.children << "\n";
     std::cout << "init seconds  : " << r.stats.initSeconds
               << "  breed seconds " << r.stats.breedSeconds
               << "  total " << r.stats.seconds << "\\n";

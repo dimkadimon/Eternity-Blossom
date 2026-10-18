@@ -101,6 +101,51 @@ bool CrossoverRegion(const Puzzle& pz,
     return true;
 }
 
+// ---------------------------------------------------------------- cycle xover
+bool CrossoverCycle(const Puzzle& pz,
+                    const std::vector<int>& pcA, const std::vector<int>& rtA,
+                    const std::vector<int>& pcB, const std::vector<int>& rtB,
+                    std::vector<int>& outPc, std::vector<int>& outRt,
+                    std::mt19937& rng, int maxCells) {
+    const int n = pz.ncells;
+
+    // cell of B holding each piece
+    std::vector<int> bcell(n, -1);
+    for (int c = 0; c < n; ++c) bcell[pcB[c]] = c;
+
+    // Start somewhere the parents disagree.  A cell they agree on is a fixed
+    // point of sigma -- a cycle of length 1 -- and transplanting it changes
+    // nothing.
+    int c0 = -1;
+    for (int t = 0; t < 64; ++t) {
+        const int c = (int)(rng() % (uint64_t)n);
+        if (pcA[c] != pcB[c]) { c0 = c; break; }
+    }
+    if (c0 < 0) return false;          // parents identical
+
+    // Walk the cycle of sigma: c -> the cell where B keeps the piece A has at c.
+    std::vector<int> cyc;
+    int c = c0;
+    do {
+        cyc.push_back(c);
+        if ((int)cyc.size() > maxCells) return false;   // too big, draw again
+        const int p = pcA[c];
+        c = bcell[p];
+        if (c < 0) return false;
+    } while (c != c0);
+
+    // On the cycle {a(c)} == {b(c)}, so taking A there and B elsewhere uses
+    // every piece exactly once.  No displacement, no repair.
+    outPc = pcB;
+    outRt = rtB;
+    for (int cell : cyc) {
+        outPc[cell] = pcA[cell];
+        outRt[cell] = rtA[cell];
+    }
+    return true;
+    return true;
+}
+
 namespace {
 
 struct Individual {
@@ -200,19 +245,47 @@ PopulationOutcome PopulationSearch(const Puzzle& pz, const PopulationParams& par
                 }
                 if (b < 0) b = (a + 1) % P;
 
-                const int h = uni(params.regionMin, params.regionMax);
-                const int w = uni(params.regionMin, params.regionMax);
-                const int r0 = (int)(rng() % (uint64_t)(pz.H - h + 1));
-                const int c0 = (int)(rng() % (uint64_t)(pz.W - w + 1));
-                Board ctx(pz);
-                ctx.load(pop[b].pc, pop[b].rt);
-                if (!CrossoverRegion(pz, pop[a].pc, pop[a].rt, pop[b].pc, pop[b].rt,
-                                     r0, c0, h, w, startPc, startRt, &ctx,
-                                     params.repairAssign)) {
-                    startPc.clear();   // fall back to a fresh restart
-                    startRt.clear();
-                } else {
+                // Best-of-T.  A single blind transplant is a random kick;
+                // drawing T candidates and keeping the cheapest child at least
+                // prefers the transplants that do the least damage, and can
+                // occasionally find one that helps.  The direction is drawn per
+                // candidate, so both A-into-B and B-into-A get tried.
+                const long long parentCost = std::min(pop[a].cost, pop[b].cost);
+                long long bestChild = (1LL << 60);
+                for (int t = 0; t < params.xoverTries; ++t) {
+                    const bool flip = (rng() % 2) == 0;
+                    const std::vector<int>& dPc = flip ? pop[b].pc : pop[a].pc;
+                    const std::vector<int>& dRt = flip ? pop[b].rt : pop[a].rt;
+                    const std::vector<int>& rPc = flip ? pop[a].pc : pop[b].pc;
+                    const std::vector<int>& rRt = flip ? pop[a].rt : pop[b].rt;
+                    std::vector<int> tp, tr;
+                    bool ok = false;
+                    if (params.xoverMode == 1) {
+                        ok = CrossoverCycle(pz, dPc, dRt, rPc, rRt, tp, tr, rng,
+                                            params.cycleMax);
+                    } else {
+                        const int h = uni(params.regionMin, params.regionMax);
+                        const int w = uni(params.regionMin, params.regionMax);
+                        const int r0 = (int)(rng() % (uint64_t)(pz.H - h + 1));
+                        const int c0 = (int)(rng() % (uint64_t)(pz.W - w + 1));
+                        Board ctx(pz);
+                        ctx.load(rPc, rRt);
+                        ok = CrossoverRegion(pz, dPc, dRt, rPc, rRt,
+                                             r0, c0, h, w, tp, tr, &ctx,
+                                             params.repairAssign);
+                    }
+                    if (!ok) continue;
+                    Board cb(pz);
+                    cb.load(tp, tr);
+                    if (cb.cost < bestChild) {
+                        bestChild = cb.cost;
+                        startPc = tp;
+                        startRt = tr;
+                    }
+                }
+                if (!startPc.empty()) {
                     st.crossovers++;
+                    if (bestChild < parentCost) ++st.childBetter;
                 }
             }
 
