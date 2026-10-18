@@ -1,0 +1,22 @@
+pieces=256 board=16x16 internal_edges=480 border_slots=64 colours=23
+grey_count=64 (needs 64)
+corners=4 edges=56 interior=196
+non_grey_colour_parity_even=yes
+matching engine: Blossom-VI (Arkhipov & Kolmogorov, arXiv:2604.20351)
+
+=== result ===
+matched edges : 435 / 480
+mismatched    : 45
+border bad    : 0
+uses every piece exactly once: yes
+wall seconds  : 120.00
+iterations    : 70049600
+perturbations : 83
+blossom passes: 3501 (improved 1964, reverted 1537)
+blossom gain  : predicted 49830, measured 49830
+assign passes : 350 (improved 2)  measured gain 4
+matching calls: 2824  avg vertices 209  avg edges 11842  total 3.012s
+coarse rotate : 7004 sweeps, 0 block rotations taken, gain 0  (levels: 1 square + 0 domino)
+coarse swap   : 1400 passes (improved 12), 12 pairs applied; predicted 32 vs measured 32
+strip rot DP  : 3502 sweeps, 1354 strips improved, gain 3030
+board written : scratch/many/s219.txt
