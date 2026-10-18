@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -17,6 +18,7 @@
 #include "e2/tjoin.hpp"
 #include "e2/nmoves.hpp"
 #include "e2/assign.hpp"
+#include "e2/holefill.hpp"
 #include "e2/matching.hpp"
 #include "e2/selftest_extra.hpp"
 #include "e2/operators.hpp"
@@ -1554,6 +1556,7 @@ int CmdComplete(const Args& a) {
     std::vector<int> pc, rt;
     if (!LoadBoard(a.get("--board", ""), pc, rt)) { std::cerr << "cannot read board\n"; return 1; }
     if ((int)pc.size() != pz.ncells) { std::cerr << "wrong cell count\n"; return 1; }
+    const std::vector<int> pcRaw = pc;   // keeps -1 in the empty cells
 
     // empty cells are -1; everything else must be a legal piece
     std::vector<int> empties, unused;
@@ -1602,9 +1605,57 @@ int CmdComplete(const Args& a) {
     }
     std::vector<int> colForRow;
     HungarianMin(cm, &colForRow);
+    std::vector<int> seedPiece(m), seedRot(m);
     for (int i = 0; i < m; ++i) {
-        b.pc[empties[colForRow[i]]] = unused[i];
-        b.rt[empties[colForRow[i]]] = bestRot[i][colForRow[i]];
+        seedPiece[colForRow[i]] = unused[i];
+        seedRot[colForRow[i]] = bestRot[i][colForRow[i]];
+    }
+    const long long hung = EvalHoleFill(pz, pcRaw, rt, empties, seedPiece, seedRot);
+
+    // ---- exact branch and bound over the holes ------------------------------
+    // The bipartite assignment above prices every edge of a hole against the
+    // hole's *current* neighbours, so hole-hole edges are priced against
+    // garbage and the two rotations are picked independently.  When holes
+    // touch -- and on these boards most of them do -- that is worth several
+    // edges.  Solve the sub-problem properly.
+    const long long nodeLimit = (long long)a.getInt("--nodes", 20000000);
+    HoleFillResult hr = SolveHoleFill(pz, pcRaw, rt, seedPiece, seedRot, nodeLimit);
+
+    // Every internal edge touching a hole is decided by the fill; the rest are
+    // already frozen.  Count each edge once.
+    std::vector<char> isEmpty(pz.ncells, 0);
+    for (int c : empties) isEmpty[c] = 1;
+    int holeHole = 0, holeFilled = 0;
+    for (int i = 0; i < m; ++i) {
+        for (int sd = 0; sd < 4; ++sd) {
+            const int nb = pz.neigh[empties[i] * 4 + sd];
+            if (nb < 0) continue;
+            if (isEmpty[nb]) { if (nb > empties[i]) ++holeHole; }
+            else ++holeFilled;
+        }
+    }
+    int baseMatched = 0, baseEdges = 0;
+    for (int e = 0; e < pz.numEdges(); ++e) {
+        const int ca = pz.eCellA[e], cb = pz.eCellB[e];
+        if (isEmpty[ca] || isEmpty[cb]) continue;
+        ++baseEdges;
+        if (b.protCol[pcRaw[ca] * 16 + rt[ca] * 4 + pz.eSideA[e]] ==
+            b.protCol[pcRaw[cb] * 16 + rt[cb] * 4 + pz.eSideB[e]]) ++baseMatched;
+    }
+    const int atStake = holeHole + holeFilled;
+    std::cout << "edges at stake    " << atStake << "  (hole-hole " << holeHole
+              << ", hole-filled " << holeFilled << ")"
+              << "   frozen: " << baseMatched << "/" << baseEdges << " already matched\n";
+    std::cout << "bipartite fill    " << hung << "/" << atStake
+              << "  ->  board " << (baseMatched + hung) << "/" << pz.numEdges() << "\n";
+    std::cout << "branch and bound  " << hr.gain << "/" << atStake
+              << "  ->  board " << (baseMatched + hr.gain) << "/" << pz.numEdges()
+              << "  (" << hr.nodes << " nodes, "
+              << (hr.optimal ? "proved optimal" : "NODE LIMIT") << ")\n";
+
+    for (int i = 0; i < m; ++i) {
+        b.pc[empties[i]] = hr.piece[i];
+        b.rt[empties[i]] = hr.rot[i];
     }
     b.rebuild();
 

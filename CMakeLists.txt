@@ -84,6 +84,7 @@ add_library(e2_core STATIC
         src/operators.cpp
         src/search.cpp
         src/assign.cpp
+        src/holefill.cpp
         src/coarse.cpp
         src/dissect.cpp
         src/popsearch.cpp
