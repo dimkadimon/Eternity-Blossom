@@ -1206,6 +1206,10 @@ int CmdPop(const Args& a) {
     sp.useSubSolve = a.has("--subsolve");
     sp.subSolveH = a.getInt("--subsolve-h", 2);
     sp.subSolveW = a.getInt("--subsolve-w", 3);
+    // Exact region re-optimisation (branch & bound over `regionSize` cells)
+    // inside every local search, including the refinement of each child.
+    sp.useRegionLNS = a.has("--region");
+    sp.regionSize = a.getInt("--region-size", 8);
 
     std::cout << "memetic search: population " << pp.popSize << ", init "
               << pp.initSeconds << "s each, breed " << pp.breedSeconds
