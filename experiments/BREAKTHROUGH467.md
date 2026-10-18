@@ -140,6 +140,40 @@ Distinct 467 boards keep turning up on different seeds and different
 operators, so 467 is a broad level with many solutions rather than one lucky
 board.
 
+## The campaign: 14 seeds, 14 sevens
+
+`scratch/part/campaign468.sh` grinds samples: a 900 s memetic run per seed,
+then an extra 150 s local search on whatever it produced (the winning child
+only ever got the 12 s refinement inside its generation, never an anneal of its
+own).  Two seeds at a time, resumable, best board copied out as soon as it is
+verified.
+
+```
+DURATION=1700 POP_TIME=900 SA_TIME=150 bash scratch/part/campaign468.sh
+```
+
+Configurations cycle over (breed seconds, temperature): (12, 0.60), (12, 0.70),
+(12, 0.80), (18, 0.70), (24, 0.70).  Result after 14 seeds — about four hours of
+compute:
+
+```
+every single run:  pop 467  +sa 467
+```
+
+Not one 468, and the extra local search never improved a board by even one edge.
+The 18 s and 24 s refinements — the untested side of the trade-off curve, since
+the sweeps had only ever compared 6 s and 12 s — are no better than 12 s.
+
+**A caveat that matters when reading this.** The campaign seeds from
+`xseeds2`, which contains the 467 boards, and runs with `--elite 2`.  Elitism
+carries the two best individuals through untouched, so a reported 467 here is
+not evidence that the search found anything — it is the seed surviving.  The
+runs that genuinely *found* 467 from scratch are the earlier ones seeded with
+the 466-class set `xseeds`: seeds 33, 77, 99 and 111.  Those are real.
+
+So the honest summary of the campaign is: ~1500 perturbed children were
+refined across 14 runs, and not one of them beat the 467 board it started from.
+
 ## Where 468 stands
 
 467 is now reproducible in 900 s, but nothing in ten runs moved past it.  The
