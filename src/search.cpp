@@ -610,14 +610,18 @@ done:
 }
 
 // ---------------------------------------------------------------------------
-SearchOutcome SearchParallel(const Puzzle& pz, const SearchParams& params, int threads) {
+SearchOutcome SearchParallel(const Puzzle& pz, const SearchParams& params, int threads,
+                             const std::vector<int>* startPc,
+                             const std::vector<int>* startRt) {
     threads = std::max(1, threads);
     std::vector<SearchOutcome> outs(threads);
     std::vector<std::thread> ts;
     for (int t = 0; t < threads; ++t) {
         SearchParams p = params;
         p.seed = params.seed + (uint64_t)t * 7919ULL + 13ULL;
-        ts.emplace_back([&pz, p, t, &outs]() { outs[t] = SearchOnce(pz, p); });
+        ts.emplace_back([&pz, p, t, &outs, startPc, startRt]() {
+            outs[t] = SearchOnce(pz, p, startPc, startRt);
+        });
     }
     for (auto& th : ts) th.join();
 

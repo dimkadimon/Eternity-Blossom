@@ -211,7 +211,13 @@ SearchOutcome SearchOnce(const Puzzle& pz, const SearchParams& params,
                          const std::vector<int>* startRt = nullptr);
 
 // Run `threads` independent searches and keep the best board found.
-SearchOutcome SearchParallel(const Puzzle& pz, const SearchParams& params, int threads);
+// If a start board is supplied every thread begins from it (with a different
+// seed, so the trajectories differ at once) -- that turns `solve` into basin
+// hopping around a known-good board, which is the right way to push past a
+// record rather than restarting from scratch every time.
+SearchOutcome SearchParallel(const Puzzle& pz, const SearchParams& params, int threads,
+                             const std::vector<int>* startPc = nullptr,
+                             const std::vector<int>* startRt = nullptr);
 
 // Recompute everything from scratch (used to validate the incremental scoring).
 struct BoardCheck {

@@ -216,7 +216,17 @@ int CmdSolve(const Args& a) {
 
     const int threads = a.getInt("--threads", 1);
     const auto t0 = std::chrono::steady_clock::now();
-    SearchOutcome out = SearchParallel(pz, sp, threads);
+    // Optional starting board: basin hopping around a known-good board instead
+    // of a fresh restart.  See SearchParallel.
+    std::vector<int> seedPc, seedRt;
+    const std::string seedBoard = a.get("--board", "");
+    if (!seedBoard.empty() && !LoadBoard(seedBoard, seedPc, seedRt)) {
+        std::cerr << "error: cannot read board " << seedBoard << "\n";
+        return 1;
+    }
+    SearchOutcome out = SearchParallel(pz, sp, threads,
+                                       seedBoard.empty() ? nullptr : &seedPc,
+                                       seedBoard.empty() ? nullptr : &seedRt);
     const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 
     BoardCheck ck = CheckBoard(pz, out.pc, out.rt);
