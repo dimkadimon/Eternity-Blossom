@@ -1,12 +1,7 @@
-# build outputs
+# Build output
 build/
-build-*/
-cmake-build-*/
-out/
-# fetched dependency (GPL-3.0; cloned at configure time, never committed)
-blossom-vi/
-# scratch
-*.o
-*.a
-__pycache__/
-.DS_Store
+
+# Scratch: keep the driver scripts, ignore the boards/log files they emit.
+scratch/*/
+scratch/*.txt
+scratch/pw.*

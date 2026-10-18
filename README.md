@@ -52,10 +52,17 @@ cmake --build build -j
 ./build/eternity-blossom solve  --pieces data/e2pieces.txt --time 60 --threads 4
 ```
 
-Requirements: CMake ≥ 3.20, a C++20 compiler, and (optionally) Boost headers —
-if Boost is absent the build uses a bundled `small_vector` shim. Blossom VI is
-cloned automatically at configure time (or point CMake at a local checkout with
-`-DBLOSSOM_VI_SOURCE_DIR=/path/to/blossom-vi`).
+Without CMake (one `g++` call, no configure step):
+
+```bash
+bash scripts/build.sh                 # or: bash scripts/build.sh --no-blossom
+```
+
+Requirements: a C++20 compiler (CMake ≥ 3.20 only for the CMake path), and
+(optionally) Boost headers — if Boost is absent the build uses a bundled
+`small_vector` shim. Blossom VI is cloned automatically on first build (or point
+at a local checkout with `BLOSSOM_VI_SOURCE_DIR=/path/to/blossom-vi`, or
+`-DBLOSSOM_VI_SOURCE_DIR=...` for CMake).
 
 ## Commands
 
