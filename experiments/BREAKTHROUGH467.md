@@ -103,10 +103,50 @@ boards from `scratch/part/gf_*.txt`, `results/best_466*.txt`,
 `scratch/part/popseeds/st1_*.txt` (lineage b), sort each by score, and
 interleave.
 
-## Next
+## The sweeps: 468 did not appear, and the window is narrow
 
-467 is now reproducible in 900 s, which makes 468 a sampling question again —
-but with a much better sampler than before (75 perturbed restarts per 900 s,
-from 466-class boards, versus whole-board runs at ~19/hour).  The knobs worth
-sweeping are `--breed-t0` around 0.60 and the number of children per unit time
-(`--pop` × `--breed` trade-off).
+Ten 900-second runs varying the refinement temperature, the children-per-hour
+trade-off, and the seed set:
+
+| `--breed-t0` | pop / breed | seed | seed set | result |
+|---|---|---|---|---|
+| 0.30 | 12 / 12 | 33 | 466-class | 466 |
+| 0.45 | 12 / 12 | 111 | 466-class | 466 |
+| **0.60** | 12 / 12 | 33 | 466-class | **467** |
+| **0.60** | 12 / 12 | 77 | 466-class | **467** |
+| **0.60** | 12 / 12 | 99 | 466-class | **467** |
+| **0.80** | 12 / 12 | 111 | 466-class | **467** |
+| 1.00 | 12 / 12 | 111 | 466-class | 466 |
+| 0.60 | 16 / 6 | 111 | 466-class | 466 |
+| **0.60** | 12 / 12 | 111 | **467-class** | **467** |
+| **0.80** | 12 / 12 | 111 | **467-class** | **467** |
+
+Three things worth recording:
+
+* **The window is 0.60–0.80.** 0.30 and 0.45 are too cold to escape, 1.00 is
+  hot enough to throw away the inheritance.  The old default of 0.30 sat below
+  the window the whole time, which is why the memetic layer never produced
+  anything.
+* **Twice as many children does not help.** 150 children at 6 s each scored
+  466 where 75 children at 12 s each scored 467.  A refinement that has not
+  converged is worse than no refinement, so the budget per child matters more
+  than the number of children.
+* **Seeding with the 467 boards themselves does not help either.** With the
+  three 467 boards in the population the children come out at cost 26 — as good
+  as the parents — and stay there.  The population sits at 467 and moves no
+  further.
+
+Distinct 467 boards keep turning up on different seeds and different
+operators, so 467 is a broad level with many solutions rather than one lucky
+board.
+
+## Where 468 stands
+
+467 is now reproducible in 900 s, but nothing in ten runs moved past it.  The
+sampler is much better than it was — 75 perturbed restarts per 900 s from
+466-class boards, against whole-board runs at ~19/hour — so the honest reading
+is that 468 needs either a lot more samples at this setting or a different
+move.  The cheapest thing left is simply to run the 0.60–0.80 recipe for many
+hours; the more interesting thing is that crossover has now been shown, three
+separate ways, not to be the mechanism — so whatever gets to 468 will come
+from the local search, not from recombination.
