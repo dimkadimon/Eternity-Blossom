@@ -212,9 +212,15 @@ If you use Blossom VI, please cite
 ## Status
 
 See [experiments/RESULTS.md](experiments/RESULTS.md) for measured numbers.
-Current best: **441/480** (300 s, 2 threads; verified by two independent
-checkers — clean grey border, every piece used once). Typical single-core runs:
-434/480 in 60 s, 429/480 in 25 s. The record is 470.
+Current best: **466/480**, produced by the Blackwood hybrid pipeline described in
+[experiments/HYBRID.md](experiments/HYBRID.md) — Blackwood's constructive DFS
+builds a deep partial board, then this project's exact assignment finishes it and
+the local-optimisation stack polishes it. Verified by two independent
+implementations (clean grey border, every piece used once). The record is 470.
+
+Searching on its own, this project plateaus at **441/480**; 12 runs at 300 s ×
+2 threads gave mean 438.0, max 441, and starting *from* the 441 board it never
+found a 442. The hybrid reliably produces 462–466 across 16 rounds.
 The gap is discussed honestly in both that file and
 [DESIGN.md §8](DESIGN.md#8-results-and-how-far-this-is-from-the-record),
 together with a ranked roadmap of what would actually close it.
