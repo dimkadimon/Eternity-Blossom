@@ -123,20 +123,38 @@ PopulationOutcome PopulationSearch(const Puzzle& pz, const PopulationParams& par
     const int P = std::max(2, params.popSize);
     const int E = std::min(params.elite, P - 1);
 
-    // ---- 1. seed the population with independent short runs
-    std::vector<Individual> pop(P);
+    // ---- 1. seed the population: caller's boards first, then short runs
+    std::vector<Individual> pop;
     const double tInit0 = elapsed();
-    for (int i = 0; i < P; ++i) {
+    // A supplied board goes in exactly as it is -- it has already had its
+    // local search, which is the whole point of supplying it.
+    for (size_t i = 0; i < params.seedPc.size() && (int)pop.size() < P; ++i) {
+        if ((int)params.seedPc[i].size() != pz.ncells) continue;
+        Individual in;
+        in.pc = params.seedPc[i];
+        in.rt = params.seedRt[i];
+        in.seed = params.seed * 7919ull + (uint64_t)i * 104729ull + 1ull;
+        Board b(pz);
+        b.load(in.pc, in.rt);
+        in.cost = b.cost;
+        pop.push_back(in);
+        if (params.verbose)
+            std::cout << "  init " << (pop.size() - 1) << ": seeded board, cost " << b.cost
+                      << " (" << b.mismatches() << " mismatched)\\n";
+    }
+    for (int i = (int)pop.size(); i < P; ++i) {
         SearchParams sp = params.search;
         sp.seed = params.seed * 7919ull + (uint64_t)i * 104729ull + 1ull;
         sp.timeLimitSeconds = params.initSeconds;
         sp.verbose = false;
         sp.trace = false;
         SearchOutcome r = SearchOnce(pz, sp);
-        pop[i].pc = r.pc;
-        pop[i].rt = r.rt;
-        pop[i].cost = r.cost;
-        pop[i].seed = sp.seed;
+        Individual in;
+        in.pc = r.pc;
+        in.rt = r.rt;
+        in.cost = r.cost;
+        in.seed = sp.seed;
+        pop.push_back(in);
         if (params.verbose)
             std::cout << "  init " << i << ": cost " << r.cost << " (" << r.score << "/480)\\n";
     }

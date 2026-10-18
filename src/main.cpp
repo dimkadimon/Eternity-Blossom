@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <filesystem>
 #include <random>
 #include <string>
 #include <unordered_map>
@@ -1170,6 +1171,27 @@ int CmdPop(const Args& a) {
     pp.verbose = a.has("--verbose");
     pp.trace = a.has("--trace");
 
+    // Boards to start the population from.  Every *.txt in the directory is
+    // loaded; the first min(popSize, n) individuals are those boards.
+    const std::string boardsDir = a.get("--boards", "");
+    int nSeed = 0;
+    if (!boardsDir.empty()) {
+        std::error_code ec;
+        std::vector<std::filesystem::path> files;
+        for (const auto& e : std::filesystem::directory_iterator(boardsDir, ec)) {
+            if (e.path().extension() == ".txt") files.push_back(e.path());
+        }
+        std::sort(files.begin(), files.end());
+        for (const auto& f : files) {
+            std::vector<int> bpc, brt;
+            if (!LoadBoard(f.string(), bpc, brt)) continue;
+            if ((int)bpc.size() != pz.ncells) continue;
+            pp.seedPc.push_back(bpc);
+            pp.seedRt.push_back(brt);
+            ++nSeed;
+        }
+    }
+
     // the local search run inside every individual
     SearchParams& sp = pp.search;
     sp.seed = pp.seed;
@@ -1188,7 +1210,8 @@ int CmdPop(const Args& a) {
     std::cout << "memetic search: population " << pp.popSize << ", init "
               << pp.initSeconds << "s each, breed " << pp.breedSeconds
               << "s each, crossover " << (pp.useCrossover ? "on" : "OFF")
-              << ", regions " << pp.regionMin << ".." << pp.regionMax << "\\n";
+              << ", regions " << pp.regionMin << ".." << pp.regionMax
+              << ", seeded with " << nSeed << " boards\\n";
 
     PopulationOutcome r = PopulationSearch(pz, pp);
     std::cout << "\\n=== result ===\\n";

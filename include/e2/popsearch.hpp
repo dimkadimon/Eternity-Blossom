@@ -59,6 +59,15 @@ struct PopulationParams {
     bool verbose = false;
     bool trace = false;            // print (seconds, best, mean) per generation
 
+    // Boards to START the population from instead of random restarts.
+    // seedPc[i]/seedRt[i] describe board i; the first min(popSize, size)
+    // individuals ARE those boards, unchanged, and any slots left over are
+    // filled by independent runs as before.  This is what lets the hybrid
+    // pipeline's boards be crossed with each other, which is the one thing
+    // `pop` could not do: on its own it can only cross the offspring of its
+    // own random restarts, and those are ~20 edges worse than a DFS board.
+    std::vector<std::vector<int>> seedPc, seedRt;
+
     // passed through to SearchOnce for every local search
     SearchParams search;
 };
