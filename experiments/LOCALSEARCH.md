@@ -104,6 +104,83 @@ Two runs from that set — one with the targeted region LNS, one without — bot
 consistent with the cluster being exactly optimal.  Two more distinct 467
 boards: `results/best_467_new1.txt`, `results/best_467_new2.txt`.
 
+## The damage is in the same place in every lineage
+
+`tools/mismap.py` on boards built three different ways:
+
+| board | how it was built | biggest unhappy cluster |
+|---|---|---|
+| `conv_b16` (464) | DFS, budget 16, completed | rows 0–5, cols 9–15 |
+| `best_466` (466) | DFS, budget 10, 8 holes | rows 0–5, cols 10–15 |
+| `best_466_b13` (466) | DFS, budget 13, 2 holes | rows 0–4, cols 9–14 |
+
+Break budget 10, 13 or 16 — hole count 8, 2 or 0 — it makes no difference.  The
+wound is always in the same corner, because that is where the traversal ends.
+The inheritance is universal, not an artefact of one setting.
+
+## A sealed neighbourhood: `--focus r0:r1:c0:c1`
+
+The cluster is exactly optimal, so the move that could matter is one that lets
+pieces cross its boundary.  Branch and bound cannot search a region that big, so
+anneal it instead: `--focus` confines the *entire* swap neighbourhood — the
+conflict list, the aimed moves, the best-of-K proposals, the perturbation kick
+and the post-kick repair — to a rectangle.
+
+```
+./build/eternity-blossom solve --board BOARD --focus 0:5:8:15 ...
+```
+
+Validation, from a 461 board, 150 s, with the global operators off
+(`--assign 2 --no-strip --no-coarse`):
+
+| | result |
+|---|---|
+| unfocused | 464 |
+| confined to 48 cells | **463** |
+
+The confined search visibly improves less, so the rectangle really is sealed.
+(The first version of this looked like a no-op because `--assign 256` runs a
+Hungarian reassignment over the whole board and simply routed around it; the
+rectangle only bites once that and the kick are confined too.)
+
+Aimed at the damaged corner of a 467, with the boundary free to move:
+
+| | result |
+|---|---|
+| rows 0–5, cols 8–15 (48 cells), t0 1.5 | 467 |
+| rows 0–6, cols 6–15 (70 cells), t0 3.0 | 467 |
+
+**The boundary-moving move does not work either.**  A 48- or 70-cell rectangle
+covering the damage and its surroundings, annealled for 300 s with everything
+outside it frozen, cannot find a single edge.
+
+## The board representation has no concept of a hole
+
+Worth recording because it rules out a whole family of moves.  Running `solve`
+on a board with empty cells segfaults, at `Board::rebuild()`:
+
+```cpp
+const int p = pc[cell];
+const uint8_t* src = &protCol[p * 16 + rt[cell] * 4];   // p = -1 -> out of bounds
+loc[p] = cell;                                          // loc[-1] -> smashed
+```
+
+`Board` assumes every cell holds a piece; only `holefill` (used by `complete`)
+knows about empties.  So "punch out the damaged region and let the SA refill it"
+— which would be the natural way to beat the fill's ~46% — needs the board
+representation taught about holes first, and every operator along with it.  Not
+attempted.
+
+## Sampling with the new boards
+
+`scratch/part/campaign468b.log`, seeds 400–401 from `newseeds3` (best seed 466,
+so nothing is inherited):
+
+```
+400  t0 0.60 breed 12   466   466
+401  t0 0.70 breed 12   467   467     <- found, not preserved
+```
+
 ## What is left
 
 The local search has now been shown optimal against: single swaps, 3-cycles,

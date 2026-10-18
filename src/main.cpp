@@ -212,6 +212,21 @@ int CmdSolve(const Args& a) {
     sp.subSolve.useEdgeBound = !a.has("--subsolve-no-edge");
 
     sp.useRegionLNS = a.opt.count("--region") > 0;
+    {   // --focus r0:r1:c0:c1  -- confine the swap neighbourhood
+        const std::string f = a.get("--focus", "");
+        if (!f.empty()) {
+            int v[4] = {0, 15, 0, 15};
+            int n = 0; size_t pos = 0;
+            while (n < 4 && pos <= f.size()) {
+                size_t nx = f.find(':', pos);
+                if (nx == std::string::npos) nx = f.size();
+                if (nx > pos) v[n++] = std::stoi(f.substr(pos, nx - pos));
+                pos = nx + 1;
+            }
+            if (n == 4) { sp.useFocus = true; sp.focusR0 = v[0]; sp.focusR1 = v[1];
+                          sp.focusC0 = v[2]; sp.focusC1 = v[3]; }
+        }
+    }
     sp.regionTargeted = a.opt.count("--region-targeted") > 0;
     sp.regionSize = a.getInt("--region-size", 8);
     const std::string init = a.get("--init", "greedystruct");

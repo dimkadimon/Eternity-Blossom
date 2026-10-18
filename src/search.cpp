@@ -119,12 +119,42 @@ SearchOutcome SearchOnce(const Puzzle& pz, const SearchParams& params,
     // violated adjacency instead of throwing two random cells together: pick a
     // violated edge, look at the colour it needs, and swap in a cell that
     // actually owns a piece carrying that colour.
+    // --- Focus rectangle.  Confine the swap neighbourhood to a rectangle so
+    // that a long run concentrates on one part of the board.  The point is to
+    // make the region's BOUNDARY movable: exact re-optimisation of the damaged
+    // cluster (regionSize 16, targeted) proved it is already optimal with its
+    // boundary pinned, so the only way forward is to let pieces cross that
+    // boundary -- which needs a neighbourhood strictly larger than the damage,
+    // and a search cheap enough to run on 40+ cells where branch and bound
+    // cannot go.
+    std::vector<int> focusCells;
+    std::vector<char> inFocus(pz.ncells, 1);
+    if (params.useFocus) {
+        std::fill(inFocus.begin(), inFocus.end(), 0);
+        for (int r = params.focusR0; r <= params.focusR1; ++r)
+            for (int c = params.focusC0; c <= params.focusC1; ++c) {
+                if (r < 0 || r >= pz.H || c < 0 || c >= pz.W) continue;
+                const int cell = r * pz.W + c;
+                inFocus[cell] = 1;
+                focusCells.push_back(cell);
+            }
+    }
+    auto pickCell = [&]() -> int {
+        if (params.useFocus && !focusCells.empty())
+            return focusCells[rng() % focusCells.size()];
+        return (int)(rng() % pz.ncells);
+    };
+
     std::vector<int> conflicts;
     std::vector<int> violEdges;
     std::vector<std::vector<int>> cellsByCol(pz.numColors + 1);
     auto rebuildIndex = [&]() {
         conflicts.clear();
-        for (int cell = 0; cell < pz.ncells; ++cell) if (b.cellCostA[cell] > 0) conflicts.push_back(cell);
+        for (int cell = 0; cell < pz.ncells; ++cell) {
+            if (b.cellCostA[cell] <= 0) continue;
+            if (params.useFocus && !inFocus[cell]) continue;
+            conflicts.push_back(cell);
+        }
         violEdges.clear();
         for (int e = 0; e < pz.numEdges(); ++e) {
             const int A = pz.eCellA[e], B = pz.eCellB[e];
@@ -192,6 +222,7 @@ SearchOutcome SearchOnce(const Puzzle& pz, const SearchParams& params,
                 const int e = violEdges[rng() % violEdges.size()];
                 const int side = (rng() & 1) ? 0 : 1;
                 a = side ? pz.eCellB[e] : pz.eCellA[e];
+                if (params.useFocus && !inFocus[a]) a = pickCell();
                 const int want = b.target[a * 4 + (side ? pz.eSideB[e] : pz.eSideA[e])];
                 bb = -1;
                 if (want >= 0 && want < (int)cellsByCol.size() && !cellsByCol[want].empty()) {
@@ -200,10 +231,10 @@ SearchOutcome SearchOnce(const Puzzle& pz, const SearchParams& params,
                         if (cand != a && pieceHasColor(b.pc[cand], want)) { bb = cand; break; }
                     }
                 }
-                if (bb < 0) { do { bb = (int)(rng() % pz.ncells); } while (bb == a); }
+                if (bb < 0) { do { bb = pickCell(); } while (bb == a); }
                 int cc = -1;
                 for (int tries = 0; tries < 4; ++tries) {
-                    const int cand = (int)(rng() % pz.ncells);
+                    const int cand = pickCell();
                     if (cand == a || cand == bb) continue;
                     if (!b.pairwiseNonAdjacent3(a, bb, cand)) continue;
                     cc = cand; break;
@@ -245,17 +276,17 @@ SearchOutcome SearchOnce(const Puzzle& pz, const SearchParams& params,
                     }
                 }
                 if (bb < 0) {
-                    do { bb = (int)(rng() % pz.ncells); } while (bb == a);
+                    do { bb = pickCell(); } while (bb == a);
                 }
             } else {
                 do {
                     if (!conflicts.empty() && U(rng) < params.pConflictFirst) {
                         a = conflicts[rng() % conflicts.size()];
-                        if (b.cellCostA[a] == 0) a = (int)(rng() % pz.ncells);
+                        if (b.cellCostA[a] == 0) a = pickCell();
                     } else {
-                        a = (int)(rng() % pz.ncells);
+                        a = pickCell();
                     }
-                    bb = (int)(rng() % pz.ncells);
+                    bb = pickCell();
                 } while (bb == a);
             }
 
@@ -293,10 +324,10 @@ SearchOutcome SearchOnce(const Puzzle& pz, const SearchParams& params,
                                 if (c2 != a2 && pieceHasColor(b.pc[c2], want)) { b2 = c2; break; }
                             }
                         }
-                        if (b2 < 0) { do { b2 = (int)(rng() % pz.ncells); } while (b2 == a2); }
+                        if (b2 < 0) { do { b2 = pickCell(); } while (b2 == a2); }
                     } else {
-                        a2 = (int)(rng() % pz.ncells);
-                        do { b2 = (int)(rng() % pz.ncells); } while (b2 == a2);
+                        a2 = pickCell();
+                        do { b2 = pickCell(); } while (b2 == a2);
                     }
                     int ra2 = 0, rb2 = 0;
                     const int d2 = b.bestSwapRotation(a2, b2, &ra2, &rb2);
@@ -469,8 +500,8 @@ SearchOutcome SearchOnce(const Puzzle& pz, const SearchParams& params,
             if (2 * rb.mismatchLB >= best) {
                 ++st.rotBoundTriggers;
                 for (int k = 0; k < params.perturbSwaps; ++k) {
-                    const int u = (int)(rng() % pz.ncells);
-                    int v = (int)(rng() % pz.ncells);
+                    const int u = pickCell();
+                    int v = pickCell();
                     if (u == v) continue;
                     b.applySwap(u, v, b.rt[v], b.rt[u]);
                 }
@@ -553,8 +584,8 @@ SearchOutcome SearchOnce(const Puzzle& pz, const SearchParams& params,
                 cost = b.cost;
             }
             for (int k = 0; k < nKick; ++k) {
-                const int u = (int)(rng() % pz.ncells);
-                int v = (int)(rng() % pz.ncells);
+                const int u = pickCell();
+                int v = pickCell();
                 if (u == v) continue;
                 b.applySwap(u, v, b.rt[v], b.rt[u]);
             }

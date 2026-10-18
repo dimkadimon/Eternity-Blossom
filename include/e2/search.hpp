@@ -92,6 +92,14 @@ struct SearchParams {
     int assignCells = 64;        // cells per pass
     AssignParams assign;
 
+    // Confine the swap neighbourhood to a rectangle [focusR0..focusR1] x
+    // [focusC0..focusC1].  Exact re-optimisation of the damaged cluster proved
+    // it is already optimal with its boundary pinned, so the remaining move is
+    // one that lets pieces cross that boundary -- a neighbourhood bigger than
+    // the damage, searched by annealing rather than by branch and bound.
+    bool useFocus = false;
+    int focusR0 = 0, focusR1 = 15, focusC0 = 0, focusC1 = 15;
+
     // Exact region re-optimisation (branch & bound + stub bound)
     bool useRegionLNS = false;
     int regionEvery = 200000;
