@@ -16,6 +16,7 @@
 #include "e2/popsearch.hpp"
 #include "e2/tjoin.hpp"
 #include "e2/nmoves.hpp"
+#include "e2/assign.hpp"
 #include "e2/matching.hpp"
 #include "e2/selftest_extra.hpp"
 #include "e2/operators.hpp"
@@ -38,6 +39,7 @@ void PrintUsage(const char* prog) {
         << "  tjoin            T-join moves (Blossom + cyclic shifts)\n"
         << "  cyccover         2-factor cycle cover (Tutte gadget + Blossom)\n"
         << "  blast            matching-guided ruin & recreate\n"
+        << "  complete         finish a PARTIAL board by exact assignment\n"
         << "  certify          Blossom VI dual / odd-set certificate\n"
         << "  pop              memetic search: population + crossover\n"
         << "  dissect         exact Hungarian reassignment over a library of dissections\n"
@@ -1536,6 +1538,86 @@ int CmdCertify(const Args& a) {
     return 0;
 }
 
+
+// ------------------------------------------------------------------ complete
+// Finish a PARTIAL board: fill the empty cells with the pieces nobody is using,
+// by exact bipartite assignment, then hand it to the local optimisers.
+//
+// This is the bridge from a constructive solver -- which builds a large
+// perfectly-matched region and then runs out of room -- to the local-optimisation
+// stack.  Such a solver reaches a deep partial board (here index ~247 of 256)
+// whose score is 0 as written, because the empty cells make it invalid.
+int CmdComplete(const Args& a) {
+    Puzzle pz = Puzzle::load(a.get("--pieces", "data/e2pieces.txt"),
+                             a.getInt("--w", 0), a.getInt("--h", 0));
+    Board b(pz);
+    std::vector<int> pc, rt;
+    if (!LoadBoard(a.get("--board", ""), pc, rt)) { std::cerr << "cannot read board\n"; return 1; }
+    if ((int)pc.size() != pz.ncells) { std::cerr << "wrong cell count\n"; return 1; }
+
+    // empty cells are -1; everything else must be a legal piece
+    std::vector<int> empties, unused;
+    std::vector<char> used(pz.ncells, 0);
+    int bad = 0;
+    for (int c = 0; c < pz.ncells; ++c) {
+        if (pc[c] < 0) { empties.push_back(c); pc[c] = 0; rt[c] = 0; continue; }
+        if (pc[c] >= pz.ncells) { std::cerr << "piece out of range at cell " << c << "\n"; return 1; }
+        if (used[pc[c]]) ++bad;
+        used[pc[c]] = 1;
+    }
+    for (int p = 0; p < pz.ncells; ++p) if (!used[p]) unused.push_back(p);
+    std::cout << "empty cells " << empties.size() << ", unused pieces " << unused.size();
+    if (bad) std::cout << ", DUPLICATED pieces " << bad;
+    std::cout << "\n";
+    if (empties.empty()) { std::cout << "board is already complete\n"; return 0; }
+    if ((int)unused.size() != (int)empties.size()) {
+        std::cerr << "mismatch: cannot complete\n";
+        return 1;
+    }
+
+    b.load(pc, rt);
+
+    // ---- exact assignment: piece -> empty cell, best rotation for each pair.
+    // Bipartite and provably optimal for the cost as written.
+    const int m = (int)empties.size();
+    std::vector<std::vector<int>> cm((size_t)m, std::vector<int>(m, 0));
+    std::vector<std::vector<int>> bestRot((size_t)m, std::vector<int>(m, 0));
+    for (int i = 0; i < m; ++i) {
+        for (int j = 0; j < m; ++j) {
+            int best = INT_MAX, br = 0;
+            for (int r = 0; r < 4; ++r) {
+                int c = 0;
+                for (int sd = 0; sd < 4; ++sd) {
+                    const int base = empties[j] * 4 + sd;
+                    const int nb = pz.neigh[base];
+                    const int w = (nb < 0) ? b.wBorderSlot : 2;
+                    const int nc = (int)b.protCol[unused[i] * 16 + r * 4 + sd];
+                    if (nc != (int)b.target[base]) c += w;
+                }
+                if (c < best) { best = c; br = r; }
+            }
+            cm[i][j] = best;
+            bestRot[i][j] = br;
+        }
+    }
+    std::vector<int> colForRow;
+    HungarianMin(cm, &colForRow);
+    for (int i = 0; i < m; ++i) {
+        b.pc[empties[colForRow[i]]] = unused[i];
+        b.rt[empties[colForRow[i]]] = bestRot[i][colForRow[i]];
+    }
+    b.rebuild();
+
+    BoardCheck ck = CheckBoard(pz, b.pc, b.rt);
+    std::cout << "after exact completion: matched " << ck.matched << "/" << pz.numEdges()
+              << "  border_bad " << ck.borderBad
+              << "  every-piece-once " << (ck.valid ? "yes" : "NO") << "\n";
+
+    const std::string outPath = a.get("--out", "");
+    if (!outPath.empty()) { SaveBoard(outPath, pz, b.pc, b.rt); std::cout << "wrote " << outPath << "\n"; }
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1551,6 +1633,7 @@ int main(int argc, char** argv) {
         if (cmd == "tjoin") return CmdTJoin(args);
         if (cmd == "cyccover") return CmdCycleCover(args);
         if (cmd == "blast") return CmdBlast(args);
+        if (cmd == "complete") return CmdComplete(args);
         if (cmd == "certify") return CmdCertify(args);
         if (cmd == "pop") return CmdPop(args);
         if (cmd == "dissect") return CmdDissect(args);
