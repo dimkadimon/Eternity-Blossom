@@ -485,9 +485,22 @@ SearchOutcome SearchOnce(const Puzzle& pz, const SearchParams& params,
         // Exact re-optimisation of a small region.
         if (params.useRegionLNS && params.regionEvery > 0 && (iters % params.regionEvery) < 4096) {
             std::vector<int> cells;
-            // grow a connected blob
+            // grow a connected blob.
+            //
+            // A uniform random seed puts most region passes on parts of the
+            // board that are already perfect, where the branch and bound can
+            // only ever confirm the obvious.  The damage on a converged board
+            // is not spread out: every 467 found so far carries 13 mismatches
+            // and almost all of them sit in ONE connected cluster of unhappy
+            // cells.  So grow the blob from an unhappy cell -- that is where
+            // re-optimising can actually change something.
             std::vector<char> in(pz.ncells, 0);
-            int seedCell = (int)(rng() % pz.ncells);
+            int seedCell;
+            if (params.regionTargeted && !conflicts.empty()) {
+                seedCell = conflicts[rng() % conflicts.size()];
+            } else {
+                seedCell = (int)(rng() % pz.ncells);
+            }
             cells.push_back(seedCell); in[seedCell] = 1;
             while ((int)cells.size() < params.regionSize) {
                 const int src = cells[rng() % cells.size()];

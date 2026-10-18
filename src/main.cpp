@@ -212,6 +212,7 @@ int CmdSolve(const Args& a) {
     sp.subSolve.useEdgeBound = !a.has("--subsolve-no-edge");
 
     sp.useRegionLNS = a.opt.count("--region") > 0;
+    sp.regionTargeted = a.opt.count("--region-targeted") > 0;
     sp.regionSize = a.getInt("--region-size", 8);
     const std::string init = a.get("--init", "greedystruct");
     if (init == "greedy") sp.init = InitMode::Greedy;
@@ -1212,6 +1213,7 @@ int CmdPop(const Args& a) {
     // Exact region re-optimisation (branch & bound over `regionSize` cells)
     // inside every local search, including the refinement of each child.
     sp.useRegionLNS = a.has("--region");
+    sp.regionTargeted = a.has("--region-targeted");
     sp.regionSize = a.getInt("--region-size", 8);
 
     std::cout << "memetic search: population " << pp.popSize << ", init "

@@ -96,6 +96,11 @@ struct SearchParams {
     bool useRegionLNS = false;
     int regionEvery = 200000;
     int regionSize = 8;
+    // Grow each region from a cell that touches a violated slot rather than
+    // from a uniformly random one.  On a converged board almost all the damage
+    // sits in a single cluster of unhappy cells, so a uniform seed spends most
+    // passes proving that perfect regions are perfect.
+    bool regionTargeted = false;
     RegionParams region;
 
     // ---- Coarse-grained moves: rigid 2x2 / 4x4 / 8x8 blocks, and domino
