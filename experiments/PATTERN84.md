@@ -79,6 +79,38 @@ The instincts behind the idea — disjoint holes make the Hungarian step exactly
 optimal, and a big connected region is easy to fill constructively — are both
 correct.  They are just worth far less than the edges they cost.
 
+## The same pattern with the DFS traversing in a different order
+
+If the damage is inherited from where the traversal ends, maybe a different
+traversal leaves different pieces behind.  `~/EternityII_Solver/random_order.py`
+installs a **random valid** order: `Prepare()` requires each cell to be placed
+after the cell to its left `(r, c-1)` and the cell below it `(r+1, c)`, and any
+linear extension of that partial order satisfies it, so the order can be
+randomised without breaking the solver.  (It still has to end at the top-right,
+which is the unique maximum of the partial order — so this changes the shape of
+the frontier, not the dead corner.)
+
+DFS at budget 13 for 120 s, then the 84 `b` cells punched back out and refilled
+by optimal assignment:
+
+| traversal | after DFS + fill | after 84-hole Hungarian | damage cluster |
+|---|---|---|---|
+| shipped winding | **461** | **461** | 15 cells, rows 0–5 cols 12–15 |
+| random order, seed 1 | 400 | 415 | 57 cells, rows 0–7 cols 5–15 |
+| random order, seed 2 | 319 | 354 | 106 cells, rows 0–13 cols 2–15 |
+
+**The shipped winding is not arbitrary, it is tuned.**  It keeps the search
+frontier compact; a random linear extension makes it ragged, the DFS gets far
+less far, and the damage spreads from 15 cells to 106.  Every attempt to move
+the traversal has now failed the same way: rotating it crashes (the piece tables
+are precomputed per rotation), reordering it starves the search, and the dead
+corner is forced by the partial order in the first place.
+
+One good side-effect worth noting: the 84-hole Hungarian step **gained** +15 and
++35 on the two randomised boards, while doing nothing for the shipped one.  That
+is the same rule as everywhere else in this session — the fill is worth a lot on
+a board that is not converged and exactly zero on one that is.
+
 ## Reproducing
 
 ```bash
